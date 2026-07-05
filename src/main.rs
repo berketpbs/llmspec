@@ -226,8 +226,13 @@ enum Command {
 
 fn main() {
     let cli = Cli::parse();
+    let json = cli.json;
     if let Err(err) = run(cli) {
-        eprintln!("{} {err}", "error:".red().bold());
+        if json {
+            println!("{}", display::to_json(&serde_json::json!({ "error": err })));
+        } else {
+            eprintln!("{} {err}", "error:".red().bold());
+        }
         std::process::exit(1);
     }
 }
@@ -525,6 +530,12 @@ fn cmd_bench(
     tokens: Option<u32>,
     calibrate: bool,
 ) -> Result<(), String> {
+    if runs == 0 {
+        return Err("--runs must be at least 1".to_string());
+    }
+    if tokens == Some(0) {
+        return Err("--tokens must be at least 1".to_string());
+    }
     let mut registry = ProviderRegistry::new();
     let discovered = bench::select_runtime(&mut registry, session.runtime)?;
     let client = Runtime::with_url(discovered.kind, &discovered.base_url);
