@@ -121,8 +121,12 @@ impl Server {
             Ok(target) => target,
             Err(e) => return (400, error_json(&e)),
         };
+        let max_context = match request.max_context() {
+            Ok(value) => value,
+            Err(e) => return (400, error_json(&e)),
+        };
         let cfg = SpeedConfig {
-            context_cap: request.max_context().or(self.cfg.context_cap),
+            context_cap: max_context.or(self.cfg.context_cap),
             ..self.cfg
         };
 
@@ -169,28 +173,41 @@ impl Server {
         // Practical thresholds, mirroring the `fit` subcommand's flags.
         if let Some(raw) = request.get("min_tps") {
             match raw.parse::<f64>() {
-                Ok(floor) => results.retain(|r| r.tokens_per_second >= floor),
-                Err(_) => return (400, error_json(&format!("min_tps '{raw}' is not a number"))),
+                Ok(floor) if floor.is_finite() && floor >= 0.0 => {
+                    results.retain(|r| r.tokens_per_second >= floor)
+                }
+                _ => {
+                    return (
+                        400,
+                        error_json(&format!(
+                            "min_tps '{raw}' must be a finite non-negative number"
+                        )),
+                    );
+                }
             }
         }
         if let Some(raw) = request.get("max_size_gb") {
             match raw.parse::<f64>() {
-                Ok(ceiling) => results.retain(|r| r.download_gb <= ceiling),
-                Err(_) => {
+                Ok(ceiling) if ceiling.is_finite() && ceiling >= 0.0 => {
+                    results.retain(|r| r.download_gb <= ceiling)
+                }
+                _ => {
                     return (
                         400,
-                        error_json(&format!("max_size_gb '{raw}' is not a number")),
+                        error_json(&format!(
+                            "max_size_gb '{raw}' must be a finite non-negative number"
+                        )),
                     );
                 }
             }
         }
         if let Some(raw) = request.get("min_context") {
             match raw.parse::<u32>() {
-                Ok(floor) => results.retain(|r| r.context >= floor),
-                Err(_) => {
+                Ok(floor) if floor > 0 => results.retain(|r| r.context >= floor),
+                _ => {
                     return (
                         400,
-                        error_json(&format!("min_context '{raw}' is not a number")),
+                        error_json(&format!("min_context '{raw}' must be a positive integer")),
                     );
                 }
             }
@@ -204,9 +221,14 @@ impl Server {
             results.retain(FitResult::is_runnable);
         }
 
-        if let Some(n) = request.limit() {
+        let requested_limit = match request.limit() {
+            Ok(limit) => limit,
+            Err(e) => return (400, error_json(&e)),
+        };
+        if let Some(n) = requested_limit {
             results.truncate(n);
-        } else if request.path == "/models/top" {
+        }
+        if request.path == "/models/top" && requested_limit.is_none() {
             results.truncate(5);
         }
 
@@ -223,15 +245,32 @@ impl Server {
 
     fn one_model(&self, id: &str, request: &Request) -> (u16, String) {
         let query = percent_decode(id);
-        let Some(model) = self.db.find(&query) else {
-            return (404, error_json(&format!("no model matches '{query}'")));
+        let model = match self.db.resolve(&query) {
+            crate::models::Lookup::Found(model) => model,
+            crate::models::Lookup::NotFound => {
+                return (404, error_json(&format!("no model matches '{query}'")));
+            }
+            crate::models::Lookup::Ambiguous(candidates) => {
+                return (
+                    400,
+                    error_json(&format!(
+                        "'{}' matches {} models; narrow the query",
+                        query,
+                        candidates.len()
+                    )),
+                );
+            }
         };
         let target = match request.use_case(self.default_use_case) {
             Ok(target) => target,
             Err(e) => return (400, error_json(&e)),
         };
+        let max_context = match request.max_context() {
+            Ok(value) => value,
+            Err(e) => return (400, error_json(&e)),
+        };
         let cfg = SpeedConfig {
-            context_cap: request.max_context().or(self.cfg.context_cap),
+            context_cap: max_context.or(self.cfg.context_cap),
             ..self.cfg
         };
         (
@@ -287,14 +326,27 @@ impl Request {
         }
     }
 
-    fn limit(&self) -> Option<usize> {
+    fn limit(&self) -> Result<Option<usize>, String> {
         self.get("limit")
             .or_else(|| self.get("n"))
-            .and_then(|v| v.parse().ok())
+            .map(|v| {
+                v.parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| format!("limit '{v}' is not a positive integer"))
+            })
+            .transpose()
     }
 
-    fn max_context(&self) -> Option<u32> {
-        self.get("max_context").and_then(|v| v.parse().ok())
+    fn max_context(&self) -> Result<Option<u32>, String> {
+        self.get("max_context")
+            .map(|v| {
+                v.parse::<u32>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| format!("max_context '{v}' is not a positive integer"))
+            })
+            .transpose()
     }
 
     fn use_case(&self, fallback: UseCase) -> Result<UseCase, String> {
@@ -461,7 +513,7 @@ mod tests {
     fn parses_query_parameters() {
         let r = parse("GET /models?limit=5&use_case=coding HTTP/1.1\r\n");
         assert_eq!(r.path, "/models");
-        assert_eq!(r.limit(), Some(5));
+        assert_eq!(r.limit(), Ok(Some(5)));
         assert_eq!(r.use_case(UseCase::General).unwrap(), UseCase::Coding);
     }
 
@@ -511,7 +563,7 @@ mod tests {
     fn empty_values_read_as_absent() {
         let r = parse("GET /models?provider=&limit=3 HTTP/1.1\r\n");
         assert_eq!(r.get("provider"), None);
-        assert_eq!(r.limit(), Some(3));
+        assert_eq!(r.limit(), Ok(Some(3)));
     }
 
     fn test_server() -> Server {
@@ -616,12 +668,23 @@ mod tests {
     }
 
     #[test]
-    fn non_numeric_thresholds_are_400s() {
+    fn invalid_thresholds_are_400s() {
         let mut server = test_server();
-        for query in ["min_tps=fast", "max_size_gb=big", "min_context=lots"] {
+        for query in [
+            "min_tps=fast",
+            "min_tps=-1",
+            "min_tps=NaN",
+            "max_size_gb=big",
+            "max_size_gb=-1",
+            "max_size_gb=inf",
+            "min_context=lots",
+            "min_context=0",
+            "limit=0",
+            "max_context=0",
+        ] {
             let (status, body) = server.route(&parse(&format!("GET /models?{query} HTTP/1.1\r\n")));
             assert_eq!(status, 400, "{query} should be rejected");
-            assert!(body.contains("not a number"));
+            assert!(body.contains("error"));
         }
     }
 
