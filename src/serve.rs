@@ -399,6 +399,15 @@ fn parse_request_line(line: &str) -> Result<Request, String> {
     let target = parts
         .next()
         .ok_or_else(|| "malformed request line: no target".to_string())?;
+    let version = parts
+        .next()
+        .ok_or_else(|| "malformed request line: no HTTP version".to_string())?;
+    if parts.next().is_some() {
+        return Err("malformed request line: too many fields".to_string());
+    }
+    if !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
+        return Err(format!("unsupported HTTP version '{version}'"));
+    }
 
     let (raw_path, raw_query) = match target.split_once('?') {
         Some((path, query)) => (path, Some(query)),
@@ -550,6 +559,9 @@ mod tests {
     fn method_is_normalised_and_missing_target_rejected() {
         assert_eq!(parse("get /health HTTP/1.1\r\n").method, "GET");
         assert!(parse_request_line("GET").is_err());
+        assert!(parse_request_line("GET /health").is_err());
+        assert!(parse_request_line("GET /health HTTP/1.1 extra").is_err());
+        assert!(parse_request_line("GET /health HTTP/2.0").is_err());
         assert!(parse_request_line("").is_err());
     }
 
