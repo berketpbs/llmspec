@@ -293,7 +293,7 @@ impl Session {
             db: ModelDb::load(),
             target,
             cfg: SpeedConfig {
-                context_cap: resolve_context_cap(cli),
+                context_cap: resolve_context_cap(cli)?,
                 // A forced runtime shifts the throughput estimate: MLX and
                 // vLLM read the same weights faster than a GGUF loader does.
                 gpu_factor: stored.speed.gpu_factor
@@ -956,12 +956,31 @@ fn bench_targets(client: &Runtime, query: &str, all: bool) -> Result<Vec<BenchTa
 }
 
 /// `--max-context`, falling back to `OLLAMA_CONTEXT_LENGTH`.
-fn resolve_context_cap(cli: &Cli) -> Option<u32> {
-    cli.max_context.or_else(|| {
-        std::env::var("OLLAMA_CONTEXT_LENGTH")
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-    })
+fn resolve_context_cap(cli: &Cli) -> Result<Option<u32>, String> {
+    if let Some(value) = cli.max_context {
+        return if value == 0 {
+            Err("--max-context must be greater than 0".to_string())
+        } else {
+            Ok(Some(value))
+        };
+    }
+
+    match std::env::var("OLLAMA_CONTEXT_LENGTH") {
+        Ok(raw) => {
+            let value = raw
+                .trim()
+                .parse::<u32>()
+                .map_err(|_| format!("OLLAMA_CONTEXT_LENGTH '{raw}' is not a positive integer"))?;
+            if value == 0 {
+                return Err("OLLAMA_CONTEXT_LENGTH must be greater than 0".to_string());
+            }
+            Ok(Some(value))
+        }
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("OLLAMA_CONTEXT_LENGTH is not valid UTF-8".to_string())
+        }
+    }
 }
 
 fn resolve_min_fit(
