@@ -966,21 +966,23 @@ fn resolve_context_cap(cli: &Cli) -> Result<Option<u32>, String> {
     }
 
     match std::env::var("OLLAMA_CONTEXT_LENGTH") {
-        Ok(raw) => {
-            let value = raw
-                .trim()
-                .parse::<u32>()
-                .map_err(|_| format!("OLLAMA_CONTEXT_LENGTH '{raw}' is not a positive integer"))?;
-            if value == 0 {
-                return Err("OLLAMA_CONTEXT_LENGTH must be greater than 0".to_string());
-            }
-            Ok(Some(value))
-        }
+        Ok(raw) => parse_context_cap(&raw, "OLLAMA_CONTEXT_LENGTH").map(Some),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => {
             Err("OLLAMA_CONTEXT_LENGTH is not valid UTF-8".to_string())
         }
     }
+}
+
+fn parse_context_cap(raw: &str, source: &str) -> Result<u32, String> {
+    let value = raw
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| format!("{source} '{raw}' is not a positive integer"))?;
+    if value == 0 {
+        return Err(format!("{source} must be greater than 0"));
+    }
+    Ok(value)
 }
 
 fn resolve_min_fit(
@@ -1024,4 +1026,17 @@ fn report_json(session: &Session, results: &[FitResult]) -> String {
         count: results.len(),
         models: results,
     })
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::parse_context_cap;
+
+    #[test]
+    fn context_cap_requires_a_positive_integer() {
+        assert_eq!(parse_context_cap("32768", "test"), Ok(32768));
+        assert!(parse_context_cap("0", "test").is_err());
+        assert!(parse_context_cap("not-a-number", "test").is_err());
+        assert!(parse_context_cap("-1", "test").is_err());
+    }
 }
