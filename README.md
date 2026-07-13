@@ -68,6 +68,9 @@ llmspec doctor               # what was detected, and what was guessed
 llmspec bench                # measure real tokens/sec
 ```
 
+Numeric hardware overrides are validated before probing the machine. Values
+such as `--cpu-cores 0` or `--gpu-count 0` fail with an explanatory error.
+
 Four questions llmspec exists to answer:
 
 **"What should I download?"**
