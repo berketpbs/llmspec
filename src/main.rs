@@ -839,6 +839,10 @@ fn parse_quant(raw: &str) -> Result<Quant, String> {
 }
 
 fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
+    validate_positive_count("--cpu-cores", cli.cpu_cores)?;
+    if cli.gpu.is_some() {
+        validate_positive_count("--gpu-count", Some(cli.gpu_count))?;
+    }
     let mut hw = Hardware::detect();
     // The named card first, so `--memory` can still resize it: a 3090 with
     // 20 GB is a question someone might reasonably ask of a used listing.
@@ -856,6 +860,14 @@ fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
     let ram = cli.ram.as_deref().map(parse_size_gb).transpose()?;
     hw.apply_overrides(vram, ram, cli.cpu_cores);
     Ok(hw)
+}
+
+fn validate_positive_count(name: &str, value: Option<usize>) -> Result<(), String> {
+    if value == Some(0) {
+        Err(format!("{name} must be greater than 0"))
+    } else {
+        Ok(())
+    }
 }
 
 fn resolve_runtime(cli: &Cli) -> Result<Option<RuntimeKind>, String> {
