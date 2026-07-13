@@ -1042,7 +1042,7 @@ fn report_json(session: &Session, results: &[FitResult]) -> String {
 
 #[cfg(test)]
 mod cli_tests {
-    use super::parse_context_cap;
+    use super::{parse_context_cap, validate_positive_count};
 
     #[test]
     fn context_cap_requires_a_positive_integer() {
@@ -1050,5 +1050,12 @@ mod cli_tests {
         assert!(parse_context_cap("0", "test").is_err());
         assert!(parse_context_cap("not-a-number", "test").is_err());
         assert!(parse_context_cap("-1", "test").is_err());
+    }
+
+    #[test]
+    fn hardware_counts_require_positive_values() {
+        assert!(validate_positive_count("test", None).is_ok());
+        assert!(validate_positive_count("test", Some(1)).is_ok());
+        assert!(validate_positive_count("test", Some(0)).is_err());
     }
 }
