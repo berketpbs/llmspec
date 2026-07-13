@@ -82,6 +82,8 @@ llmspec bench                # measure real tokens/sec
 
 Numeric hardware overrides are validated before probing the machine. Values
 such as `--cpu-cores 0` or `--gpu-count 0` fail with an explanatory error.
+Size overrides also reject non-finite values instead of allowing them into
+memory calculations.
 
 Four questions llmspec exists to answer:
 
