@@ -1155,6 +1155,8 @@ mod tests {
         assert_eq!(parse_size_gb("24").unwrap(), 24.0);
         assert!(parse_size_gb("abc").is_err());
         assert!(parse_size_gb("12X").is_err());
+        assert!(parse_size_gb("NaNG").is_err());
+        assert!(parse_size_gb("infG").is_err());
     }
 
     #[test]
