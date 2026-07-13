@@ -1135,6 +1135,9 @@ pub fn parse_size_gb(input: &str) -> Result<f64, String> {
         "k" | "kb" | "kib" => value / (1024.0 * 1024.0),
         other => return Err(format!("unknown unit '{other}': use G, M or T")),
     };
+    if !gb.is_finite() {
+        return Err(format!("invalid size '{raw}': value is not finite"));
+    }
     Ok(gb)
 }
 
