@@ -1153,6 +1153,8 @@ mod tests {
         assert_eq!(parse_size_gb("512M").unwrap(), 0.5);
         assert_eq!(parse_size_gb("1T").unwrap(), 1024.0);
         assert_eq!(parse_size_gb("24").unwrap(), 24.0);
+        // Zero is intentional: it requests CPU-only simulation.
+        assert_eq!(parse_size_gb("0").unwrap(), 0.0);
         assert!(parse_size_gb("abc").is_err());
         assert!(parse_size_gb("12X").is_err());
         assert!(parse_size_gb("NaNG").is_err());
