@@ -411,3 +411,8 @@ and a model that does not shard cleanly will do worse than predicted.
 
 **The catalog is a snapshot.** It ships embedded in the binary. Models newer
 than the build are added through `models.json` in the config directory.
+### HTTP input boundary
+
+The read-only API treats query parameters as a bounded, unique map. Oversized,
+duplicated, or malformed input is rejected before it reaches fit analysis so
+request parsing cannot change the meaning of an existing filter.
