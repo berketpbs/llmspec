@@ -569,6 +569,18 @@ mod tests {
     }
 
     #[test]
+    fn query_limits_reject_broad_or_oversized_requests() {
+        let many = (0..=MAX_QUERY_PARAMETERS)
+            .map(|n| format!("k{n}=v"))
+            .collect::<Vec<_>>()
+            .join("&");
+        assert!(parse_request_line(&format!("GET /?{many} HTTP/1.1")).is_err());
+
+        let huge = "x".repeat(MAX_QUERY_COMPONENT_BYTES + 1);
+        assert!(parse_request_line(&format!("GET /?q={huge} HTTP/1.1")).is_err());
+    }
+
+    #[test]
     fn method_is_normalised_and_missing_target_rejected() {
         assert_eq!(parse("get /health HTTP/1.1\r\n").method, "GET");
         assert!(parse_request_line("GET").is_err());
