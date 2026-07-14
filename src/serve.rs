@@ -18,6 +18,8 @@ use crate::providers::ProviderRegistry;
 
 /// Cap on the request line plus headers. Anything larger is a client bug.
 const MAX_HEADER_BYTES: usize = 8 * 1024;
+const MAX_QUERY_PARAMETERS: usize = 64;
+const MAX_QUERY_COMPONENT_BYTES: usize = 4 * 1024;
 
 /// A slow or wedged client must not hold the single-threaded loop.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -416,7 +418,18 @@ fn parse_request_line(line: &str) -> Result<Request, String> {
 
     let mut query = HashMap::new();
     if let Some(raw) = raw_query {
-        for pair in raw.split('&').filter(|p| !p.is_empty()) {
+        let pairs: Vec<_> = raw.split('&').filter(|p| !p.is_empty()).collect();
+        if pairs.len() > MAX_QUERY_PARAMETERS {
+            return Err(format!(
+                "too many query parameters (maximum {MAX_QUERY_PARAMETERS})"
+            ));
+        }
+        for pair in pairs {
+            if pair.len() > MAX_QUERY_COMPONENT_BYTES {
+                return Err(format!(
+                    "query parameter is too large (maximum {MAX_QUERY_COMPONENT_BYTES} bytes)"
+                ));
+            }
             let (key, value) = match pair.split_once('=') {
                 Some((k, v)) => (k, v),
                 None => (pair, ""),
