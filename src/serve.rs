@@ -434,7 +434,11 @@ fn parse_request_line(line: &str) -> Result<Request, String> {
                 Some((k, v)) => (k, v),
                 None => (pair, ""),
             };
-            query.insert(percent_decode(key), percent_decode(value));
+            let key = percent_decode(key);
+            let value = percent_decode(value);
+            if query.insert(key.clone(), value).is_some() {
+                return Err(format!("duplicate query parameter '{key}'"));
+            }
         }
     }
 
