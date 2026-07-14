@@ -585,6 +585,11 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_query_parameters_are_rejected() {
+        assert!(parse_request_line("GET /models?limit=1&limit=2 HTTP/1.1").is_err());
+    }
+
+    #[test]
     fn method_is_normalised_and_missing_target_rejected() {
         assert_eq!(parse("get /health HTTP/1.1\r\n").method, "GET");
         assert!(parse_request_line("GET").is_err());
