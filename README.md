@@ -334,7 +334,8 @@ The CLI applies the same fail-closed rule to `--max-context` and the
 with an explanatory error instead of being silently ignored.
 
 The HTTP server also bounds request parsing: it accepts at most 64 query
-parameters and rejects an individual query component larger than 4 KiB.
+parameters, rejects duplicate keys, and rejects an individual query component
+larger than 4 KiB.
 
 Built on `std::net` — serving adds no dependency.
 
