@@ -25,7 +25,7 @@ use serde::Serialize;
 /// The largest header string or JSON blob worth reading. Both formats cap out
 /// far below this in practice; the limit exists so a corrupt length field
 /// fails fast instead of reserving whatever it asked for.
-const MAX_HEADER_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_HEADER_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Smallest possible on-disk size of one tensor descriptor (an empty name,
 /// zero dimensions, type and offset). Used to reject an impossible tensor
