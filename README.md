@@ -394,6 +394,8 @@ without touching the weights.
 
 Verification caps untrusted header and metadata lengths at 64 MiB and rejects
 claims that cannot fit in the remaining file before allocating or iterating.
+Duplicate GGUF metadata keys are treated as structural corruption rather than
+silently allowing the last value to win.
 
 ```sh
 llmspec verify ~/.ollama/models/blobs/sha256-2bada8a745...
