@@ -776,6 +776,11 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    #[test]
+    fn header_budget_is_bounded_for_untrusted_files() {
+        assert_eq!(MAX_HEADER_BYTES, 64 * 1024 * 1024);
+    }
+
     fn temp(name: &str) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();
         path.push(format!("llmspec-verify-{}-{name}", std::process::id()));
