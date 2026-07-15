@@ -844,6 +844,29 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_metadata_keys_are_reported_as_corruption() {
+        let mut bytes = b"GGUF".to_vec();
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&2u64.to_le_bytes());
+        for value in ["one", "two"] {
+            bytes.extend(gguf_string("duplicate"));
+            bytes.extend_from_slice(&8u32.to_le_bytes());
+            bytes.extend(gguf_string(value));
+        }
+        let path = write("duplicate-metadata.gguf", &bytes);
+        let report = verify(&path).unwrap();
+        assert!(!report.is_intact());
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.message.contains("duplicate metadata key"))
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn a_truncated_download_is_the_error_this_command_exists_for() {
         let mut bytes = good_gguf();
         bytes.truncate(bytes.len() - 200);
