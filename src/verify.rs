@@ -369,7 +369,9 @@ fn read_metadata(reader: &mut Cursor, count: u64) -> Result<BTreeMap<String, Str
         let key = reader.string()?;
         let kind = reader.u32()?;
         let value = read_value(reader, kind, 0)?;
-        map.insert(key, value);
+        if map.insert(key.clone(), value).is_some() {
+            return Err(format!("duplicate metadata key '{key}'"));
+        }
     }
     Ok(map)
 }
