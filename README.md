@@ -368,6 +368,9 @@ A 40 GB download that stopped at 38 GB looks fine until the runtime chokes on
 it. `llmspec verify` reads the header and says so in a fraction of a second,
 without touching the weights.
 
+Verification caps untrusted header and metadata lengths at 64 MiB and rejects
+claims that cannot fit in the remaining file before allocating or iterating.
+
 ```sh
 llmspec verify ~/.ollama/models/blobs/sha256-2bada8a745...
 ```
