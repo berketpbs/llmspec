@@ -371,9 +371,7 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
     if consumed == 0 {
         return Err("empty request".to_string());
     }
-    if consumed == MAX_HEADER_BYTES && !line.ends_with('\n') {
-        return Err("request headers exceed the 8 KiB limit".to_string());
-    }
+    ensure_request_line_complete(consumed, &line)?;
 
     let request = parse_request_line(&line)?;
 
@@ -393,6 +391,14 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
     }
 
     Ok(request)
+}
+
+fn ensure_request_line_complete(consumed: usize, line: &str) -> Result<(), String> {
+    if consumed == MAX_HEADER_BYTES && !line.ends_with('\n') {
+        Err("request headers exceed the 8 KiB limit".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_request_line(line: &str) -> Result<Request, String> {
