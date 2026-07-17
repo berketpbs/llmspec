@@ -599,6 +599,13 @@ mod tests {
     }
 
     #[test]
+    fn unterminated_header_at_the_limit_is_rejected() {
+        assert!(ensure_request_line_complete(MAX_HEADER_BYTES, "partial").is_err());
+        assert!(ensure_request_line_complete(MAX_HEADER_BYTES, "complete\n").is_ok());
+        assert!(ensure_request_line_complete(MAX_HEADER_BYTES - 1, "partial").is_ok());
+    }
+
+    #[test]
     fn method_is_normalised_and_missing_target_rejected() {
         assert_eq!(parse("get /health HTTP/1.1\r\n").method, "GET");
         assert!(parse_request_line("GET").is_err());
