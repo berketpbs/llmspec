@@ -360,6 +360,9 @@ answers either, so it does not matter which one your client speaks.
 Because stdout carries the protocol, every diagnostic goes to stderr. Clients
 show that as the server's log.
 
+MCP messages are capped at 1 MiB. Oversized input receives a JSON-RPC invalid
+request response and is not passed to the JSON parser.
+
 ---
 
 ## Verifying a download
