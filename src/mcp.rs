@@ -1101,4 +1101,14 @@ mod tests {
             Tool::ALL.len()
         );
     }
+
+    #[test]
+    fn oversized_messages_are_rejected_without_json_parsing() {
+        let mut s = server();
+        let input = format!("{}\n", "x".repeat(MAX_MESSAGE_BYTES + 1));
+        let mut output = Vec::new();
+        s.run(&mut input.as_bytes(), &mut output).unwrap();
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(response["error"]["code"], INVALID_REQUEST);
+    }
 }
