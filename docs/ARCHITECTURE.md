@@ -416,6 +416,8 @@ than the build are added through `models.json` in the config directory.
 The read-only API treats query parameters as a bounded, unique map. Oversized,
 duplicated, or malformed input is rejected before it reaches fit analysis so
 request parsing cannot change the meaning of an existing filter.
+The request line must also terminate within the fixed header budget; a client
+that leaves a partial line open is rejected instead of waiting indefinitely.
 
 Model verification applies the same rule to GGUF metadata: duplicate keys are
 an error because accepting the last value would make the result depend on
