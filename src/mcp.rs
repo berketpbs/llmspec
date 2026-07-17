@@ -40,6 +40,7 @@ const MODERN_VERSION: &str = "2026-07-28";
 const LEGACY_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 const SERVER_NAME: &str = "llmspec";
+const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Shown to the model. Worth the words: without them an assistant tends to
@@ -329,6 +330,20 @@ impl Mcp {
                 Ok(0) => return Ok(()),
                 Ok(_) => {}
                 Err(e) => return Err(format!("cannot read from stdin: {e}")),
+            }
+            if line.len() > MAX_MESSAGE_BYTES {
+                let response = render(error_response(
+                    Value::Null,
+                    INVALID_REQUEST,
+                    "message exceeds the 1 MiB limit",
+                    None,
+                ));
+                writeln!(output, "{response}")
+                    .map_err(|e| format!("cannot write to stdout: {e}"))?;
+                output
+                    .flush()
+                    .map_err(|e| format!("cannot flush stdout: {e}"))?;
+                continue;
             }
             if line.trim().is_empty() {
                 continue;
