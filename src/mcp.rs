@@ -706,15 +706,20 @@ fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 /// over as a string, and rejecting `"8"` for a number would be a needless
 /// round trip for the model to recover from.
 fn arg_f64(args: &Value, key: &str) -> Result<Option<f64>, String> {
-    match args.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Number(n)) => Ok(n.as_f64()),
-        Some(Value::String(s)) => s
-            .trim()
-            .parse::<f64>()
-            .map(Some)
-            .map_err(|_| format!("'{key}' must be a number, got '{s}'")),
-        Some(other) => Err(format!("'{key}' must be a number, got {other}")),
+    let value = match args.get(key) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => Some(
+            s.trim()
+                .parse::<f64>()
+                .map_err(|_| format!("'{key}' must be a number, got '{s}'"))?,
+        ),
+        Some(other) => return Err(format!("'{key}' must be a number, got {other}")),
+    };
+    match value {
+        Some(n) if n.is_finite() => Ok(Some(n)),
+        Some(_) => Err(format!("'{key}' must be finite")),
+        None => Err(format!("'{key}' must be a number")),
     }
 }
 
