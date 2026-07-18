@@ -422,3 +422,6 @@ that leaves a partial line open is rejected instead of waiting indefinitely.
 Model verification applies the same rule to GGUF metadata: duplicate keys are
 an error because accepting the last value would make the result depend on
 record ordering.
+
+Runtime adapters validate timing and size provenance before attaching a
+measurement to a catalog model, so invalid telemetry cannot affect ranking.
