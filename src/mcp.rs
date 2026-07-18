@@ -1033,6 +1033,19 @@ mod tests {
     }
 
     #[test]
+    fn non_finite_numeric_arguments_are_rejected() {
+        let mut s = server();
+        let response = call(&mut s, "fit", json!({ "max_size_gb": "NaN" }));
+        assert_eq!(response["result"]["isError"], true);
+        assert!(
+            response["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("finite")
+        );
+    }
+
+    #[test]
     fn a_tool_result_carries_the_same_answer_as_text_and_as_structure() {
         // A client that ignores structuredContent still has to see the answer.
         let mut s = server();
