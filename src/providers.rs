@@ -1021,6 +1021,14 @@ mod tests {
     }
 
     #[test]
+    fn openai_samples_require_positive_elapsed_time() {
+        let json = r#"{"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+        assert!(parse_openai_sample(json, 0.0).is_err());
+        assert!(parse_openai_sample(json, -1.0).is_err());
+        assert!(parse_openai_sample(json, f64::NAN).is_err());
+    }
+
+    #[test]
     fn normalization_unifies_the_runtimes_spellings_of_one_model() {
         // Upstream repo id, LM Studio's listing, and a llama.cpp GGUF file
         // name all describe the same weights.
