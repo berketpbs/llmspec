@@ -760,6 +760,9 @@ fn parse_ollama_sample(text: &str) -> Result<Sample, String> {
 }
 
 fn parse_openai_sample(text: &str, elapsed: f64) -> Result<Sample, String> {
+    if !elapsed.is_finite() || elapsed <= 0.0 {
+        return Err("response elapsed time must be finite and positive".to_string());
+    }
     let parsed: ChatResponse =
         serde_json::from_str(text).map_err(|e| format!("parsing chat completion: {e}"))?;
     if let Some(err) = parsed.error {
