@@ -363,6 +363,9 @@ show that as the server's log.
 MCP messages are capped at 1 MiB. Oversized input receives a JSON-RPC invalid
 request response and is not passed to the JSON parser.
 
+Numeric MCP arguments must also be finite; string values such as `"NaN"` and
+`"inf"` are rejected as tool errors.
+
 ---
 
 ## Verifying a download
