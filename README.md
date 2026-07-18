@@ -383,6 +383,8 @@ Numeric MCP arguments must also be finite; string values such as `"NaN"` and
 
 Runtime-reported parameter sizes follow the same rule: malformed, negative,
 zero and non-finite sizes are ignored rather than used to select a model.
+Provider benchmark samples also require a finite, positive elapsed duration
+before throughput is calculated.
 
 ---
 
