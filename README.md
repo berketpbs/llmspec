@@ -366,6 +366,9 @@ request response and is not passed to the JSON parser.
 Numeric MCP arguments must also be finite; string values such as `"NaN"` and
 `"inf"` are rejected as tool errors.
 
+Runtime-reported parameter sizes follow the same rule: malformed, negative,
+zero and non-finite sizes are ignored rather than used to select a model.
+
 ---
 
 ## Verifying a download
