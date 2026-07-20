@@ -574,6 +574,25 @@ mod tests {
     }
 
     #[test]
+    fn invalid_persisted_factors_fall_back_to_safe_defaults() {
+        let config: Config = serde_json::from_str(
+            r#"{"speed_model":2,"ram_probe":2,"speed":{"efficiency":-1.0,"gpu_factor":0.0,"cpu_only_factor":2.0},"ram_bandwidth_gb_s":-4.0}"#,
+        )
+        .unwrap();
+        let loaded = config.migrated();
+        assert_eq!(
+            loaded.speed.efficiency,
+            PersistedSpeed::default().efficiency
+        );
+        assert_eq!(
+            loaded.speed.gpu_factor,
+            PersistedSpeed::default().gpu_factor
+        );
+        assert_eq!(loaded.speed.cpu_only_factor, 2.0);
+        assert_eq!(loaded.ram_bandwidth_gb_s, None);
+    }
+
+    #[test]
     fn a_bandwidth_from_an_older_probe_is_measured_again() {
         // The single-threaded probe read about 15% below the threaded one on
         // the same machine. Keeping its figure would pin that machine to the
