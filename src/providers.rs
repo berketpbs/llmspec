@@ -1117,6 +1117,9 @@ mod tests {
         assert_eq!(parse_parameter_size(""), None);
         assert_eq!(parse_parameter_size("unknown"), None);
         assert_eq!(parse_parameter_size("0B"), None);
+        assert_eq!(parse_parameter_size("NaNB"), None);
+        assert_eq!(parse_parameter_size("infB"), None);
+        assert_eq!(parse_parameter_size("-1B"), None);
     }
 
     #[test]
