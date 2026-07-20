@@ -425,3 +425,6 @@ record ordering.
 
 Runtime adapters validate timing and size provenance before attaching a
 measurement to a catalog model, so invalid telemetry cannot affect ranking.
+
+Configuration is treated as untrusted input too: persisted factors and cache
+values are checked during migration before the analysis session consumes them.
