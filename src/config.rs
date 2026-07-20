@@ -289,6 +289,35 @@ impl Config {
             self.ram_bandwidth_gb_s = None;
             self.ram_probe = RAM_PROBE_VERSION;
         }
+        let defaults = PersistedSpeed::default();
+        for (value, fallback) in [
+            (&mut self.speed.efficiency, defaults.efficiency),
+            (&mut self.speed.cpu_efficiency, defaults.cpu_efficiency),
+            (&mut self.speed.gpu_factor, defaults.gpu_factor),
+            (
+                &mut self.speed.cpu_offload_factor,
+                defaults.cpu_offload_factor,
+            ),
+            (
+                &mut self.speed.moe_offload_factor,
+                defaults.moe_offload_factor,
+            ),
+            (
+                &mut self.speed.tensor_parallel_factor,
+                defaults.tensor_parallel_factor,
+            ),
+            (&mut self.speed.cpu_only_factor, defaults.cpu_only_factor),
+        ] {
+            if !value.is_finite() || *value <= 0.0 {
+                *value = fallback;
+            }
+        }
+        if self
+            .ram_bandwidth_gb_s
+            .is_some_and(|value| !value.is_finite() || value <= 0.0)
+        {
+            self.ram_bandwidth_gb_s = None;
+        }
         self
     }
 
