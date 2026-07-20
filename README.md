@@ -385,6 +385,9 @@ Runtime-reported parameter sizes follow the same rule: malformed, negative,
 zero and non-finite sizes are ignored rather than used to select a model.
 Provider benchmark samples also require a finite, positive elapsed duration
 before throughput is calculated.
+Hand-edited persisted speed factors and cached bandwidth values are sanitized
+on load; invalid values fall back to safe defaults rather than influencing
+model ranking.
 
 ---
 
