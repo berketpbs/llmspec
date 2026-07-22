@@ -59,6 +59,8 @@ there is nothing else to install and nothing to fetch at runtime.
 
 Pull requests run formatting, locked dependency tests, Clippy with warnings
 denied, and a generated-catalog consistency check.
+The Rust validation jobs use the repository’s declared Rust 1.85 toolchain and
+enable backtraces for actionable CI failures.
 
 The catalog check also validates the generator’s Python syntax and rejects
 records with empty ids, non-positive parameter counts, or invalid contexts.
