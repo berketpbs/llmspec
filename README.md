@@ -57,6 +57,9 @@ cargo build --release      # target/release/llmspec
 Needs Rust 1.85 or newer. The model catalog is compiled into the binary, so
 there is nothing else to install and nothing to fetch at runtime.
 
+Pull requests run formatting, locked dependency tests, Clippy with warnings
+denied, and a generated-catalog consistency check.
+
 ---
 
 ## Quick start
