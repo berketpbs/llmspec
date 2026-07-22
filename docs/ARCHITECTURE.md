@@ -428,3 +428,6 @@ measurement to a catalog model, so invalid telemetry cannot affect ranking.
 
 Configuration is treated as untrusted input too: persisted factors and cache
 values are checked during migration before the analysis session consumes them.
+
+CI uses the same Rust version declared by the package, keeping local and
+reviewed builds on one compiler contract.
