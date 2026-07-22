@@ -29,7 +29,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Test
-        run: cargo test --all-features
+        run: cargo test --locked --all-features
 
   lint:
     name: Clippy
@@ -52,7 +52,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
   catalog:
     name: Catalog
