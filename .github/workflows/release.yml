@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85
         with:
           targets: ${{ matrix.target }}
 
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85
 
       - name: Publish
         run: cargo publish --locked --token ${{ secrets.CARGO_TOKEN }}
