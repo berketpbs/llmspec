@@ -70,6 +70,8 @@ each validation job, preventing stale or wedged checks from consuming runners.
 
 Release builds and crates.io publishing also use the committed lockfile, so
 published artifacts are built from the reviewed dependency graph.
+Release jobs use the same Rust toolchain as CI and have explicit timeouts for
+cross-platform builds and publishing.
 
 ---
 
