@@ -23,6 +23,7 @@ in the way an invented number would be.
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -994,7 +995,11 @@ def validate_records(records):
     for entry in records:
         if not entry["id"].strip():
             raise SystemExit("model records must have a non-empty id")
-        if not isinstance(entry["params_b"], (int, float)) or entry["params_b"] <= 0:
+        if (
+            not isinstance(entry["params_b"], (int, float))
+            or not math.isfinite(entry["params_b"])
+            or entry["params_b"] <= 0
+        ):
             raise SystemExit(f"invalid parameter count for {entry['id']}")
         if not isinstance(entry["context_length"], int) or entry["context_length"] <= 0:
             raise SystemExit(f"invalid context length for {entry['id']}")
