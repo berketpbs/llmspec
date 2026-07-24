@@ -60,6 +60,9 @@ there is nothing else to install and nothing to fetch at runtime.
 Pull requests run formatting, locked dependency tests, Clippy with warnings
 denied, and a generated-catalog consistency check.
 
+The catalog check also validates the generator’s Python syntax and rejects
+records with empty ids, non-positive parameter counts, or invalid contexts.
+
 Release builds and crates.io publishing also use the committed lockfile, so
 published artifacts are built from the reviewed dependency graph.
 
