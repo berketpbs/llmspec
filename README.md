@@ -64,6 +64,8 @@ enable backtraces for actionable CI failures.
 
 The catalog check also validates the generator’s Python syntax and rejects
 records with empty ids, non-positive parameter counts, or invalid contexts.
+Small regression tests exercise those invariants directly, including rejection
+of non-finite parameter counts.
 
 CI cancels superseded runs for the same ref and applies explicit timeouts to
 each validation job, preventing stale or wedged checks from consuming runners.
