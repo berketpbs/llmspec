@@ -64,6 +64,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Validate catalog script syntax
+        run: python -m compileall -q scripts
+
       # data/models.json is generated from scripts/add_models.py; a hand edit
       # to the JSON would be lost on the script's next run.
       - name: Check the catalog matches its generator
