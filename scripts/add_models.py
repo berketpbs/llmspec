@@ -972,6 +972,7 @@ def build(db):
     stable sort, so records that tie on the sort key keep their relative order
     from one run to the next. Records with no entry in MODELS are dropped.
     """
+    validate_records(MODELS)
     wanted = {entry["id"]: entry for entry in MODELS}
     if len(wanted) != len(MODELS):
         seen, dupes = set(), set()
@@ -987,6 +988,16 @@ def build(db):
     models = kept + added
     models.sort(key=lambda e: (e["provider"].lower(), -e["params_b"]))
     return {**db, "models": models}, added, dropped
+
+
+def validate_records(records):
+    for entry in records:
+        if not entry["id"].strip():
+            raise SystemExit("model records must have a non-empty id")
+        if not isinstance(entry["params_b"], (int, float)) or entry["params_b"] <= 0:
+            raise SystemExit(f"invalid parameter count for {entry['id']}")
+        if not isinstance(entry["context_length"], int) or entry["context_length"] <= 0:
+            raise SystemExit(f"invalid context length for {entry['id']}")
 
 
 def render(db):
