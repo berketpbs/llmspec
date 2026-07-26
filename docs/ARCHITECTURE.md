@@ -434,3 +434,6 @@ reviewed builds on one compiler contract.
 
 Release automation inherits that contract and limits build/publish duration so
 an unavailable target cannot hold the release indefinitely.
+
+Automation checkouts keep credentials ephemeral; validation jobs do not leave
+tokens available to later build steps.
