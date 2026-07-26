@@ -69,6 +69,7 @@ of non-finite parameter counts.
 
 CI cancels superseded runs for the same ref and applies explicit timeouts to
 each validation job, preventing stale or wedged checks from consuming runners.
+Checkout steps do not persist repository credentials into the runner workspace.
 
 Release builds and crates.io publishing also use the committed lockfile, so
 published artifacts are built from the reviewed dependency graph.
