@@ -24,6 +24,7 @@ impl Ollama {
     }
 
     /// Custom Ollama instance.
+    #[allow(dead_code)]
     pub fn with_url(url: impl Into<String>) -> Self {
         Ollama {
             base_url: url.into(),
@@ -60,6 +61,7 @@ impl Ollama {
     }
 
     /// Delete an installed model (future Download Manager support).
+    #[allow(dead_code)]
     pub fn delete(&self, tag: &str) -> Result<(), String> {
         let url = format!("{}/api/delete", self.base_url.trim_end_matches('/'));
         let body = DeleteRequest { name: tag };
@@ -78,6 +80,7 @@ struct PullRequest<'a> {
 }
 
 #[derive(Serialize)]
+#[allow(dead_code)]
 struct DeleteRequest<'a> {
     name: &'a str,
 }
@@ -199,18 +202,21 @@ impl ProviderRegistry {
     }
 
     /// Check whether an exact Ollama tag is installed (no fuzzy matching).
+    #[allow(dead_code)]
     pub fn is_installed(&mut self, ollama_tag: &str) -> Result<bool, String> {
         let models = self.list_all_models()?;
         Ok(models.iter().any(|m| m.name == ollama_tag))
     }
 
     /// Pull a model from Ollama (runs blocking; use on a background thread).
+    #[allow(dead_code)]
     pub fn pull_from_ollama(&self, tag: &str) -> Result<(), String> {
         Ollama::default().pull(tag)
     }
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Provider {
     Ollama(Ollama),
 }

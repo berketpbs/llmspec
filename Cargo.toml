@@ -2,6 +2,13 @@
 name = "llmspec"
 version = "0.1.0"
 edition = "2024"
+description = "Find which LLMs actually run well on your hardware"
+repository = "https://github.com/berketpbs/llmspec"
+license = "MIT"
+readme = "README.md"
+keywords = ["llm", "gpu", "vram", "benchmark", "tui"]
+categories = ["command-line-utilities"]
+rust-version = "1.85"
 
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
