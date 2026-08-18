@@ -36,6 +36,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             // Any key dismisses the help popup.
             app.mode = Mode::Normal;
         }
+        Mode::SimulateHardware => handle_simulation_key(app, key),
         Mode::Normal | Mode::Detail => handle_normal_key(app, key),
     }
 }
@@ -55,6 +56,45 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Up => app.move_selection(-1),
         KeyCode::Down => app.move_selection(1),
+        _ => {}
+    }
+}
+
+fn handle_simulation_key(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => app.cancel_simulation(),
+        KeyCode::Enter => app.apply_simulation(),
+        KeyCode::Tab => app.sim_field = (app.sim_field + 1) % 3,
+        KeyCode::Down if !ctrl => app.sim_field = (app.sim_field + 1) % 3,
+        KeyCode::Up if !ctrl => app.sim_field = if app.sim_field == 0 { 2 } else { app.sim_field - 1 },
+        KeyCode::Char('j') => app.sim_field = (app.sim_field + 1) % 3,
+        KeyCode::Char('k') => app.sim_field = if app.sim_field == 0 { 2 } else { app.sim_field - 1 },
+        KeyCode::Backspace => match app.sim_field {
+            0 => { app.sim_vram_input.pop(); }
+            1 => { app.sim_ram_input.pop(); }
+            2 => { app.sim_cpu_input.pop(); }
+            _ => {}
+        },
+        KeyCode::Char('u') if ctrl => match app.sim_field {
+            0 => app.sim_vram_input.clear(),
+            1 => app.sim_ram_input.clear(),
+            2 => app.sim_cpu_input.clear(),
+            _ => {}
+        },
+        KeyCode::Char('r') if ctrl => {
+            // Reset to current hardware
+            app.sim_vram_input = app.hw.gpus.first().map(|g| format!("{:.1}", g.vram_gb))
+                .unwrap_or_else(|| "0.0".to_string());
+            app.sim_ram_input = format!("{:.1}", app.hw.total_ram_gb);
+            app.sim_cpu_input = format!("{}", app.hw.cpu_cores);
+        }
+        KeyCode::Char(c) if c.is_numeric() || c == '.' => match app.sim_field {
+            0 => app.sim_vram_input.push(c),
+            1 => app.sim_ram_input.push(c),
+            2 => app.sim_cpu_input.push(c),
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -88,6 +128,7 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
             None => app.status = "no Ollama tag for this model".to_string(),
         },
         KeyCode::Char('r') => app.refresh_installed(),
+        KeyCode::Char('S') => app.open_simulation(),
 
         KeyCode::Enter => {
             app.mode = if app.mode == Mode::Detail {

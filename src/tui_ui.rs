@@ -50,6 +50,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     if app.mode == Mode::Help {
         render_help(frame, frame.area());
+    } else if app.mode == Mode::SimulateHardware {
+        render_simulation(frame, frame.area(), app);
     }
 }
 
@@ -374,6 +376,49 @@ fn render_help(frame: &mut Frame, area: Rect) {
         Paragraph::new(lines).block(
             Block::bordered()
                 .title(" Key bindings — any key to close ")
+                .style(Style::new().add_modifier(Modifier::BOLD)),
+        ),
+        popup,
+    );
+}
+
+fn render_simulation(frame: &mut Frame, area: Rect, app: &App) {
+    let width = 50.min(area.width.saturating_sub(4));
+    let height = 13.min(area.height.saturating_sub(2));
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+
+    let vram_style = if app.sim_field == 0 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+    let ram_style = if app.sim_field == 1 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+    let cpu_style = if app.sim_field == 2 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+
+    let mut lines = vec![Line::raw("")];
+    lines.push(Line::from(vec![
+        Span::styled("  VRAM (GB): ", vram_style),
+        Span::raw(&app.sim_vram_input),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  RAM (GB): ", ram_style),
+        Span::raw(&app.sim_ram_input),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  CPU cores: ", cpu_style),
+        Span::raw(&app.sim_cpu_input),
+    ]));
+    lines.push(Line::raw(""));
+    lines.push(Line::raw("  Tab/j/k to move fields"));
+    lines.push(Line::raw("  Ctrl+R to reset, Enter to apply"));
+    lines.push(Line::raw("  Esc to cancel"));
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title(" Hardware Simulation ")
                 .style(Style::new().add_modifier(Modifier::BOLD)),
         ),
         popup,

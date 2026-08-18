@@ -18,6 +18,7 @@ pub enum Mode {
     Search,
     Help,
     Detail,
+    SimulateHardware,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +151,12 @@ pub struct App {
     download_rx: mpsc::Receiver<DownloadEvent>,
     /// Channel sender for download threads (cloned at startup).
     download_tx: mpsc::Sender<DownloadEvent>,
+
+    /// Hardware simulation: which field is active (0=VRAM, 1=RAM, 2=CPU cores)
+    pub sim_field: usize,
+    pub sim_vram_input: String,
+    pub sim_ram_input: String,
+    pub sim_cpu_input: String,
 }
 
 impl App {
@@ -182,6 +189,10 @@ impl App {
             download_tag: None,
             download_rx,
             download_tx,
+            sim_field: 0,
+            sim_vram_input: String::new(),
+            sim_ram_input: String::new(),
+            sim_cpu_input: String::new(),
         };
         app.recompute();
         app
@@ -360,6 +371,39 @@ impl App {
             }
             Err(e) => self.status = format!("refresh failed: {e}"),
         }
+    }
+
+    /// Open hardware simulation popup with current values.
+    pub fn open_simulation(&mut self) {
+        self.sim_field = 0;
+        self.sim_vram_input = self.hw.gpus.first().map(|g| format!("{:.1}", g.vram_gb))
+            .unwrap_or_else(|| "8.0".to_string());
+        self.sim_ram_input = format!("{:.1}", self.hw.total_ram_gb);
+        self.sim_cpu_input = format!("{}", self.hw.cpu_cores);
+        self.mode = Mode::SimulateHardware;
+    }
+
+    /// Apply simulation changes and close popup.
+    pub fn apply_simulation(&mut self) {
+        if let Ok(vram) = self.sim_vram_input.parse::<f64>() {
+            self.hw.set_vram(vram.max(0.1));
+        }
+        if let Ok(ram) = self.sim_ram_input.parse::<f64>() {
+            self.hw.total_ram_gb = ram.max(0.1);
+            self.hw.available_ram_gb = ram.max(0.1);
+        }
+        if let Ok(cores) = self.sim_cpu_input.parse::<usize>() {
+            self.hw.cpu_cores = cores.max(1);
+            self.hw.cpu_threads = (cores as u32).max(1) as usize;
+        }
+        self.mode = Mode::Normal;
+        self.recompute();
+        self.status = "hardware simulation applied".to_string();
+    }
+
+    /// Close simulation popup without applying changes.
+    pub fn cancel_simulation(&mut self) {
+        self.mode = Mode::Normal;
     }
 }
 
