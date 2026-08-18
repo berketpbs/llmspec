@@ -1,6 +1,7 @@
 //! TUI event loop and key handling.
 
 use std::io;
+use std::time::Duration;
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -8,16 +9,20 @@ use crate::tui_app::{App, Mode};
 use crate::tui_ui;
 
 const PAGE: isize = 10;
+const POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 /// Run the interactive interface until the user quits.
 pub fn run(app: &mut App) -> io::Result<()> {
     ratatui::run(|terminal| {
         while !app.should_quit {
             terminal.draw(|frame| tui_ui::draw(frame, app))?;
-            match event::read()? {
-                // Windows reports both press and release; act on press only.
-                Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key),
-                _ => {}
+            app.poll_downloads();
+            if event::poll(POLL_INTERVAL)? {
+                match event::read()? {
+                    // Windows reports both press and release; act on press only.
+                    Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key),
+                    _ => {}
+                }
             }
         }
         Ok(())
@@ -77,6 +82,12 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('a') => app.cycle_availability(),
         KeyCode::Char('s') => app.cycle_sort(),
         KeyCode::Char('u') => app.cycle_use_case(),
+
+        KeyCode::Char('d') => match app.selected_result().and_then(|r| r.ollama.clone()) {
+            Some(tag) => app.start_pull(tag),
+            None => app.status = "no Ollama tag for this model".to_string(),
+        },
+        KeyCode::Char('r') => app.refresh_installed(),
 
         KeyCode::Enter => {
             app.mode = if app.mode == Mode::Detail {
@@ -222,5 +233,43 @@ mod tests {
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.mode, Mode::Detail);
         assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn r_refresh_updates_status() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('r'));
+        // Ollama is absent in CI, so status will contain an error or "refreshed".
+        // Just verify that it set the status and didn't panic.
+        assert!(!app.status.is_empty());
+    }
+
+    #[test]
+    fn d_with_ollama_tag_starts_download() {
+        let mut app = app();
+        // All seed models now have ollama tags, so the selected model should have one.
+        if let Some(result) = app.selected_result() {
+            if let Some(_tag) = &result.ollama {
+                press(&mut app, KeyCode::Char('d'));
+                // Verify download started (tag is set and status shows pulling).
+                assert!(app.download_tag.is_some());
+                assert!(app.status.contains("pulling"));
+            }
+        }
+    }
+
+    #[test]
+    fn d_key_does_not_panic() {
+        let mut test_app = app();
+        // All 27 seed models have ollama tags, so this exercises the "with tag" branch.
+        // The "no tag" branch is not covered with the current DB, but the code path
+        // exists for future models without Ollama tags.
+        if let Some(result) = test_app.selected_result() {
+            if result.ollama.is_some() {
+                press(&mut test_app, KeyCode::Char('d'));
+                // Just verify it didn't panic and set a status.
+                assert!(!test_app.status.is_empty());
+            }
+        }
     }
 }

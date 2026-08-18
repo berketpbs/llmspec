@@ -5,23 +5,25 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Row, Table, TableState, Wrap};
+use std::collections::HashSet;
 
 use crate::display::{format_context, format_params, format_tps};
 use crate::fit::{FitLevel, FitResult, RunMode};
 use crate::tui_app::{App, Mode};
 
-const HEADER: [&str; 11] = [
-    "Model", "Provider", "Params", "Quant", "Mode", "Fit", "Mem%", "Ctx", "tok/s", "Score",
-    "Use Case",
+const HEADER: [&str; 12] = [
+    "Model", "Provider", "Params", "Quant", "Mode", "Fit", "Inst", "Mem%", "Ctx", "tok/s",
+    "Score", "Use Case",
 ];
 
-const WIDTHS: [Constraint; 11] = [
+const WIDTHS: [Constraint; 12] = [
     Constraint::Min(24),
     Constraint::Length(13),
     Constraint::Length(8),
     Constraint::Length(7),
     Constraint::Length(8),
     Constraint::Length(9),
+    Constraint::Length(4),
     Constraint::Length(6),
     Constraint::Length(6),
     Constraint::Length(7),
@@ -147,7 +149,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &mut App) {
     let rows: Vec<Row> = app
         .visible
         .iter()
-        .map(|&i| row_for(&app.results[i]))
+        .map(|&i| row_for(&app.results[i], &app.installed))
         .collect();
 
     let title = format!(
@@ -171,8 +173,14 @@ fn render_table(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_stateful_widget(table, area, &mut state);
 }
 
-fn row_for(r: &FitResult) -> Row<'static> {
+fn row_for(r: &FitResult, installed: &HashSet<String>) -> Row<'static> {
     let score = format!("{:.1}", r.scores.composite);
+    let inst = match &r.ollama {
+        Some(tag) if installed.contains(tag) => {
+            Span::styled("✓", Style::new().fg(Color::Green))
+        }
+        _ => Span::styled("–", Style::new().dim()),
+    };
     Row::new(vec![
         Span::raw(r.name.clone()),
         Span::styled(r.provider.clone(), Style::new().dim()),
@@ -180,6 +188,7 @@ fn row_for(r: &FitResult) -> Row<'static> {
         Span::raw(r.quant.label()),
         Span::styled(r.mode.label(), Style::new().fg(mode_color(r.mode))),
         Span::styled(r.fit.label(), Style::new().fg(fit_color(r.fit))),
+        inst,
         Span::raw(format!("{:.0}%", r.mem_percent)),
         Span::raw(format_context(r.context)),
         Span::raw(format_tps(r.tokens_per_second)),
@@ -301,7 +310,7 @@ fn render_status(frame: &mut Frame, area: Rect, app: &App) {
         ]),
         _ => {
             let mut spans = vec![Span::styled(
-                " j/k move · / search · f fit · a avail · s sort · u use case · Enter detail · h help · q quit",
+                " j/k move · / search · f fit · a avail · s sort · u use case · d download · r refresh · Enter detail · h help · q quit",
                 Style::new().dim(),
             )];
             if !app.status.is_empty() {
@@ -335,6 +344,8 @@ const HELP: &[(&str, &str)] = &[
     ("a", "cycle availability filter: All, GGUF Avail"),
     ("s", "cycle sort column"),
     ("u", "cycle target use case and re-rank"),
+    ("d", "download selected model via Ollama"),
+    ("r", "refresh installed models from Ollama"),
     ("Enter", "toggle the detail panel"),
     ("h / ?", "this help"),
     ("q / Esc", "quit"),

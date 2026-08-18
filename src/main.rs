@@ -4,6 +4,7 @@ mod display;
 mod fit;
 mod hardware;
 mod models;
+mod providers;
 mod tui_app;
 mod tui_events;
 mod tui_ui;
