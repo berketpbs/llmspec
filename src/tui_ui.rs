@@ -420,6 +420,56 @@ fn render_plan_view(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+fn render_advanced_config(frame: &mut Frame, area: Rect, app: &App) {
+    let width = 56.min(area.width.saturating_sub(4));
+    let height = 15.min(area.height.saturating_sub(2));
+    let popup = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+
+    let eff_style = if app.cfg_field == 0 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+    let gpu_style = if app.cfg_field == 1 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+    let cpu_style = if app.cfg_field == 2 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+    let moe_style = if app.cfg_field == 3 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+
+    let mut lines = vec![Line::raw("")];
+    lines.push(Line::from(vec![
+        Span::styled("  Efficiency (0.01-1.0):  ", eff_style),
+        Span::raw(&app.cfg_efficiency_input),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  GPU factor (0.1-2.0):   ", gpu_style),
+        Span::raw(&app.cfg_gpu_factor_input),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  CPU offload (0.1-1.0):  ", cpu_style),
+        Span::raw(&app.cfg_cpu_offload_input),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  MoE offload (0.1-1.0):  ", moe_style),
+        Span::raw(&app.cfg_moe_offload_input),
+    ]));
+    lines.push(Line::raw(""));
+    lines.push(Line::raw("  Efficiency: bandwidth utilization (default 0.55)"));
+    lines.push(Line::raw("  GPU factor: speed multiplier on GPU (default 1.0)"));
+    lines.push(Line::raw("  Offload factors: hybrid exec speed (defaults 0.5/0.8)"));
+    lines.push(Line::raw(""));
+    lines.push(Line::raw("  Tab/j/k to move, Enter to apply, Esc to cancel"));
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title(" Advanced Speed Config ")
+                .style(Style::new().add_modifier(Modifier::BOLD)),
+        ),
+        popup,
+    );
+}
+
 fn render_simulation(frame: &mut Frame, area: Rect, app: &App) {
     let width = 50.min(area.width.saturating_sub(4));
     let height = 13.min(area.height.saturating_sub(2));
