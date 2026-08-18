@@ -36,6 +36,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             // Any key dismisses the help popup.
             app.mode = Mode::Normal;
         }
+        Mode::Plan => {
+            // Any key exits plan mode.
+            app.mode = Mode::Normal;
+        }
         Mode::SimulateHardware => handle_simulation_key(app, key),
         Mode::Normal | Mode::Detail => handle_normal_key(app, key),
     }
@@ -129,6 +133,11 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
         },
         KeyCode::Char('r') => app.refresh_installed(),
         KeyCode::Char('S') => app.open_simulation(),
+        KeyCode::Char('p') => {
+            if app.selected_result().is_some() {
+                app.mode = Mode::Plan;
+            }
+        }
 
         KeyCode::Enter => {
             app.mode = if app.mode == Mode::Detail {

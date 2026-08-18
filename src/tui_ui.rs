@@ -32,7 +32,7 @@ const WIDTHS: [Constraint; 12] = [
 ];
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let detail_height = if app.mode == Mode::Detail { 13 } else { 0 };
+    let detail_height = if app.mode == Mode::Detail || app.mode == Mode::Plan { 13 } else { 0 };
     let layout = Layout::vertical([
         Constraint::Length(6),
         Constraint::Fill(1),
@@ -45,6 +45,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_table(frame, table, app);
     if app.mode == Mode::Detail {
         render_detail(frame, detail, app);
+    } else if app.mode == Mode::Plan {
+        render_plan_view(frame, detail, app);
     }
     render_status(frame, status, app);
 
@@ -380,6 +382,40 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ),
         popup,
     );
+}
+
+fn render_plan_view(frame: &mut Frame, area: Rect, app: &App) {
+    if let Some(result) = app.selected_result() {
+        use crate::fit::plan;
+        let plan_info = plan(
+            &app.db.models.iter().find(|m| m.id == result.model_id).unwrap(),
+            result.quant,
+            result.context,
+            &app.cfg,
+        );
+
+        let mut lines = vec![];
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {} @ {} params", plan_info.model_name, format_params(plan_info.params_b, None)), Style::new().bold()),
+        ]));
+        lines.push(Line::from(format!(" context={}", format_context(plan_info.context_length))));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(format!(" Min VRAM (GPU):     {:.1} GB", plan_info.min_vram_gb)));
+        lines.push(Line::from(format!(" Recommended VRAM:   {:.1} GB", plan_info.recommended_vram_gb)));
+        lines.push(Line::from(format!(" Min RAM (CPU):      {:.1} GB", plan_info.min_ram_gb)));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(format!(" GPU tok/s:  {:.1}", plan_info.tps_gpu)));
+        lines.push(Line::from(format!(" CPU tok/s:  {:.1}", plan_info.tps_cpu)));
+        lines.push(Line::raw(""));
+        lines.push(Line::from(format!(" Viable modes: {}", plan_info.viable_modes.join(", "))));
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(Block::bordered().title(" Hardware Plan (press any key to close) "))
+                .style(Style::new()),
+            area,
+        );
+    }
 }
 
 fn render_simulation(frame: &mut Frame, area: Rect, app: &App) {

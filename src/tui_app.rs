@@ -18,6 +18,7 @@ pub enum Mode {
     Search,
     Help,
     Detail,
+    Plan,
     SimulateHardware,
 }
 
