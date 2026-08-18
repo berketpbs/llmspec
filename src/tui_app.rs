@@ -3,6 +3,14 @@
 use crate::fit::{self, FitLevel, FitResult, SpeedConfig};
 use crate::hardware::Hardware;
 use crate::models::{Model, ModelDb, UseCase};
+use crate::providers::ProviderRegistry;
+use std::collections::HashSet;
+use std::sync::mpsc;
+
+#[derive(Debug, Clone)]
+pub enum DownloadEvent {
+    Done { tag: String, result: Result<(), String> },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -131,10 +139,29 @@ pub struct App {
     pub sort: SortColumn,
     pub status: String,
     pub should_quit: bool,
+
+    /// Ollama tags known to be installed.
+    pub installed: HashSet<String>,
+    /// Provider registry for querying installed models and pulling.
+    pub providers: ProviderRegistry,
+    /// Tag currently being downloaded, if any.
+    pub download_tag: Option<String>,
+    /// Channel receiver for download completion events.
+    download_rx: mpsc::Receiver<DownloadEvent>,
+    /// Channel sender for download threads (cloned at startup).
+    download_tx: mpsc::Sender<DownloadEvent>,
 }
 
 impl App {
     pub fn new(hw: Hardware, db: ModelDb, target: UseCase, cfg: SpeedConfig) -> App {
+        let (download_tx, download_rx) = mpsc::channel();
+
+        let mut providers = ProviderRegistry::new();
+        let installed = providers
+            .list_all_models()
+            .map(|models| models.into_iter().map(|m| m.name).collect())
+            .unwrap_or_default();
+
         let mut app = App {
             results: Vec::new(),
             visible: Vec::new(),
@@ -150,6 +177,11 @@ impl App {
             db,
             cfg,
             target,
+            installed,
+            providers,
+            download_tag: None,
+            download_rx,
+            download_tx,
         };
         app.recompute();
         app
@@ -286,6 +318,49 @@ impl App {
         self.search.clear();
         self.refilter();
     }
+
+    /// Kick off a background pull of `tag`. No-op if a download is already in flight.
+    pub fn start_pull(&mut self, tag: String) {
+        if self.download_tag.is_some() {
+            self.status = format!(
+                "already downloading {}",
+                self.download_tag.as_deref().unwrap_or("")
+            );
+            return;
+        }
+        self.status = format!("pulling {tag}…");
+        self.download_tag = Some(tag.clone());
+        let tx = self.download_tx.clone();
+        std::thread::spawn(move || {
+            let result = crate::providers::Ollama::default().pull(&tag);
+            let _ = tx.send(DownloadEvent::Done { tag, result });
+        });
+    }
+
+    /// Non-blocking poll of the download channel; call once per event-loop tick.
+    pub fn poll_downloads(&mut self) {
+        while let Ok(DownloadEvent::Done { tag, result }) = self.download_rx.try_recv() {
+            self.download_tag = None;
+            match result {
+                Ok(()) => {
+                    self.installed.insert(tag.clone());
+                    self.status = format!("pulled {tag}");
+                }
+                Err(e) => self.status = format!("pull of {tag} failed: {e}"),
+            }
+        }
+    }
+
+    /// Synchronous forced refresh of installed models (bypasses the cache).
+    pub fn refresh_installed(&mut self) {
+        match self.providers.refresh_all_models() {
+            Ok(models) => {
+                self.installed = models.into_iter().map(|m| m.name).collect();
+                self.status = "refreshed installed models".to_string();
+            }
+            Err(e) => self.status = format!("refresh failed: {e}"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -328,11 +403,10 @@ mod tests {
         app.refilter();
         assert!(!app.visible.is_empty());
         assert!(app.visible.iter().all(|&i| {
-            app.results[i]
-                .provider
-                .to_ascii_lowercase()
-                .contains("qwen")
-                || app.results[i].name.to_ascii_lowercase().contains("qwen")
+            let r = &app.results[i];
+            r.provider.to_ascii_lowercase().contains("qwen")
+                || r.name.to_ascii_lowercase().contains("qwen")
+                || r.model_id.to_ascii_lowercase().contains("qwen")
         }));
     }
 
