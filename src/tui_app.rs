@@ -9,7 +9,10 @@ use std::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum DownloadEvent {
-    Done { tag: String, result: Result<(), String> },
+    Done {
+        tag: String,
+        result: Result<(), String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,7 +402,11 @@ impl App {
     /// Open hardware simulation popup with current values.
     pub fn open_simulation(&mut self) {
         self.sim_field = 0;
-        self.sim_vram_input = self.hw.gpus.first().map(|g| format!("{:.1}", g.vram_gb))
+        self.sim_vram_input = self
+            .hw
+            .gpus
+            .first()
+            .map(|g| format!("{:.1}", g.vram_gb))
             .unwrap_or_else(|| "8.0".to_string());
         self.sim_ram_input = format!("{:.1}", self.hw.total_ram_gb);
         self.sim_cpu_input = format!("{}", self.hw.cpu_cores);
@@ -442,16 +449,16 @@ impl App {
     /// Apply advanced config changes and close popup.
     pub fn apply_advanced_config(&mut self) {
         if let Ok(v) = self.cfg_efficiency_input.parse::<f64>() {
-            self.cfg.efficiency = v.max(0.01).min(1.0);
+            self.cfg.efficiency = v.clamp(0.01, 1.0);
         }
         if let Ok(v) = self.cfg_gpu_factor_input.parse::<f64>() {
-            self.cfg.gpu_factor = v.max(0.1).min(2.0);
+            self.cfg.gpu_factor = v.clamp(0.1, 2.0);
         }
         if let Ok(v) = self.cfg_cpu_offload_input.parse::<f64>() {
-            self.cfg.cpu_offload_factor = v.max(0.1).min(1.0);
+            self.cfg.cpu_offload_factor = v.clamp(0.1, 1.0);
         }
         if let Ok(v) = self.cfg_moe_offload_input.parse::<f64>() {
-            self.cfg.moe_offload_factor = v.max(0.1).min(1.0);
+            self.cfg.moe_offload_factor = v.clamp(0.1, 1.0);
         }
         self.mode = Mode::Normal;
         self.recompute();
@@ -486,7 +493,9 @@ impl App {
     /// Get the marked model result if it exists.
     pub fn marked_result(&self) -> Option<&FitResult> {
         self.marked_model_idx.and_then(|idx| {
-            self.visible.get(idx).and_then(|&result_idx| self.results.get(result_idx))
+            self.visible
+                .get(idx)
+                .and_then(|&result_idx| self.results.get(result_idx))
         })
     }
 }

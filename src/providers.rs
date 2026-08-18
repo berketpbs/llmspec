@@ -33,6 +33,7 @@ impl Ollama {
 
     /// True if Ollama answered /api/tags successfully.
     /// This is a network call (no separate cheap probe).
+    #[allow(dead_code)]
     pub fn is_alive(&self) -> bool {
         self.list_models().is_ok()
     }
@@ -40,7 +41,9 @@ impl Ollama {
     /// List installed models from /api/tags.
     pub fn list_models(&self) -> Result<Vec<InstalledModel>, String> {
         let url = format!("{}/api/tags", self.base_url.trim_end_matches('/'));
-        let mut resp = ureq::get(&url).call().map_err(|e| format!("GET {url}: {e}"))?;
+        let mut resp = ureq::get(&url)
+            .call()
+            .map_err(|e| format!("GET {url}: {e}"))?;
         let text = resp
             .body_mut()
             .read_to_string()
@@ -53,7 +56,10 @@ impl Ollama {
     /// Known issue: remote OLLAMA_HOST hangs due to no timeout; use locally.
     pub fn pull(&self, tag: &str) -> Result<(), String> {
         let url = format!("{}/api/pull", self.base_url.trim_end_matches('/'));
-        let body = PullRequest { name: tag, stream: false };
+        let body = PullRequest {
+            name: tag,
+            stream: false,
+        };
         ureq::post(&url)
             .send_json(body)
             .map_err(|e| format!("POST {url} ({tag}): {e}"))?;
@@ -126,6 +132,7 @@ pub struct InstalledModel {
 }
 
 impl InstalledModel {
+    #[allow(dead_code)]
     pub fn size_gb(&self) -> f64 {
         self.size_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
     }
@@ -145,6 +152,7 @@ impl ProviderRegistry {
     }
 
     /// Discover available providers (quick liveness check).
+    #[allow(dead_code)]
     pub fn discover(&self) -> Vec<Provider> {
         let mut providers = Vec::new();
         if Ollama::default().is_alive() {
@@ -190,7 +198,8 @@ impl ProviderRegistry {
             let ollama = Ollama::default();
             match ollama.list_models() {
                 Ok(models) => {
-                    self.cache.insert(cache_key.to_string(), (models.clone(), now));
+                    self.cache
+                        .insert(cache_key.to_string(), (models.clone(), now));
                     models
                 }
                 Err(_) => Vec::new(),
@@ -222,6 +231,7 @@ pub enum Provider {
 }
 
 impl Provider {
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             Provider::Ollama(_) => "Ollama",
@@ -301,7 +311,8 @@ mod tests {
 
     #[test]
     fn parse_tags_handles_multiple_entries() {
-        let json = r#"{"models":[{"name":"llama3.2:1b","size":1000},{"name":"mistral:7b","size":2000}]}"#;
+        let json =
+            r#"{"models":[{"name":"llama3.2:1b","size":1000},{"name":"mistral:7b","size":2000}]}"#;
         let result = parse_tags(json).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].name, "llama3.2:1b");

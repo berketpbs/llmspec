@@ -249,7 +249,12 @@ fn run(cli: Cli) -> Result<(), String> {
             }
         }
 
-        Some(Command::Plan { model, context, quant, target_tps: _ }) => {
+        Some(Command::Plan {
+            model,
+            context,
+            quant,
+            target_tps: _,
+        }) => {
             let q = model.join(" ");
             let found = db
                 .find(&q)

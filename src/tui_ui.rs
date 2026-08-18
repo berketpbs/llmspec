@@ -66,6 +66,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn accent(self) -> Color {
         match self {
             Theme::Default => Color::Cyan,
@@ -81,6 +82,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn header_fg(self) -> Color {
         match self {
             Theme::Default => Color::White,
@@ -96,6 +98,7 @@ impl Theme {
         }
     }
 
+    #[allow(dead_code)]
     pub fn fit_perfect(self) -> Color {
         match self {
             Theme::Dracula => Color::Green,
@@ -106,8 +109,8 @@ impl Theme {
 }
 
 const HEADER: [&str; 12] = [
-    "Model", "Provider", "Params", "Quant", "Mode", "Fit", "Inst", "Mem%", "Ctx", "tok/s",
-    "Score", "Use Case",
+    "Model", "Provider", "Params", "Quant", "Mode", "Fit", "Inst", "Mem%", "Ctx", "tok/s", "Score",
+    "Use Case",
 ];
 
 const WIDTHS: [Constraint; 12] = [
@@ -126,7 +129,12 @@ const WIDTHS: [Constraint; 12] = [
 ];
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let detail_height = if app.mode == Mode::Detail || app.mode == Mode::Plan || app.mode == Mode::Comparison { 13 } else { 0 };
+    let detail_height =
+        if app.mode == Mode::Detail || app.mode == Mode::Plan || app.mode == Mode::Comparison {
+            13
+        } else {
+            0
+        };
     let layout = Layout::vertical([
         Constraint::Length(6),
         Constraint::Fill(1),
@@ -278,9 +286,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &mut App) {
 fn row_for(r: &FitResult, installed: &HashSet<String>) -> Row<'static> {
     let score = format!("{:.1}", r.scores.composite);
     let inst = match &r.ollama {
-        Some(tag) if installed.contains(tag) => {
-            Span::styled("✓", Style::new().fg(Color::Green))
-        }
+        Some(tag) if installed.contains(tag) => Span::styled("✓", Style::new().fg(Color::Green)),
         _ => Span::styled("–", Style::new().dim()),
     };
     Row::new(vec![
@@ -485,18 +491,49 @@ fn render_help(frame: &mut Frame, area: Rect) {
 fn render_comparison(frame: &mut Frame, area: Rect, app: &App) {
     if let (Some(marked), Some(selected)) = (app.marked_result(), app.selected_result()) {
         let mut lines = vec![];
-        lines.push(Line::from(vec![Span::styled(" Model Comparison ", Style::new().bold())]));
+        lines.push(Line::from(vec![Span::styled(
+            " Model Comparison ",
+            Style::new().bold(),
+        )]));
         lines.push(Line::raw(""));
 
         let attrs = vec![
-            ("Score", format!("{:.1} vs {:.1}", marked.scores.composite, selected.scores.composite)),
-            ("tok/s", format!("{:.1} vs {:.1}", marked.tokens_per_second, selected.tokens_per_second)),
+            (
+                "Score",
+                format!(
+                    "{:.1} vs {:.1}",
+                    marked.scores.composite, selected.scores.composite
+                ),
+            ),
+            (
+                "tok/s",
+                format!(
+                    "{:.1} vs {:.1}",
+                    marked.tokens_per_second, selected.tokens_per_second
+                ),
+            ),
             ("Fit", format!("{:?} vs {:?}", marked.fit, selected.fit)),
-            ("Mem%", format!("{:.1}% vs {:.1}%", marked.mem_percent, selected.mem_percent)),
-            ("Params", format!("{:.1}B vs {:.1}B", marked.params_b, selected.params_b)),
+            (
+                "Mem%",
+                format!("{:.1}% vs {:.1}%", marked.mem_percent, selected.mem_percent),
+            ),
+            (
+                "Params",
+                format!("{:.1}B vs {:.1}B", marked.params_b, selected.params_b),
+            ),
             ("Mode", format!("{:?} vs {:?}", marked.mode, selected.mode)),
-            ("Context", format!("{} vs {}", format_context(marked.context), format_context(selected.context))),
-            ("Quant", format!("{:?} vs {:?}", marked.quant, selected.quant)),
+            (
+                "Context",
+                format!(
+                    "{} vs {}",
+                    format_context(marked.context),
+                    format_context(selected.context)
+                ),
+            ),
+            (
+                "Quant",
+                format!("{:?} vs {:?}", marked.quant, selected.quant),
+            ),
         ];
 
         for (attr, vals) in attrs {
@@ -519,26 +556,50 @@ fn render_plan_view(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(result) = app.selected_result() {
         use crate::fit::plan;
         let plan_info = plan(
-            &app.db.models.iter().find(|m| m.id == result.model_id).unwrap(),
+            app.db
+                .models
+                .iter()
+                .find(|m| m.id == result.model_id)
+                .unwrap(),
             result.quant,
             result.context,
             &app.cfg,
         );
 
         let mut lines = vec![];
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {} @ {} params", plan_info.model_name, format_params(plan_info.params_b, None)), Style::new().bold()),
-        ]));
-        lines.push(Line::from(format!(" context={}", format_context(plan_info.context_length))));
+        lines.push(Line::from(vec![Span::styled(
+            format!(
+                " {} @ {} params",
+                plan_info.model_name,
+                format_params(plan_info.params_b, None)
+            ),
+            Style::new().bold(),
+        )]));
+        lines.push(Line::from(format!(
+            " context={}",
+            format_context(plan_info.context_length)
+        )));
         lines.push(Line::raw(""));
-        lines.push(Line::from(format!(" Min VRAM (GPU):     {:.1} GB", plan_info.min_vram_gb)));
-        lines.push(Line::from(format!(" Recommended VRAM:   {:.1} GB", plan_info.recommended_vram_gb)));
-        lines.push(Line::from(format!(" Min RAM (CPU):      {:.1} GB", plan_info.min_ram_gb)));
+        lines.push(Line::from(format!(
+            " Min VRAM (GPU):     {:.1} GB",
+            plan_info.min_vram_gb
+        )));
+        lines.push(Line::from(format!(
+            " Recommended VRAM:   {:.1} GB",
+            plan_info.recommended_vram_gb
+        )));
+        lines.push(Line::from(format!(
+            " Min RAM (CPU):      {:.1} GB",
+            plan_info.min_ram_gb
+        )));
         lines.push(Line::raw(""));
         lines.push(Line::from(format!(" GPU tok/s:  {:.1}", plan_info.tps_gpu)));
         lines.push(Line::from(format!(" CPU tok/s:  {:.1}", plan_info.tps_cpu)));
         lines.push(Line::raw(""));
-        lines.push(Line::from(format!(" Viable modes: {}", plan_info.viable_modes.join(", "))));
+        lines.push(Line::from(format!(
+            " Viable modes: {}",
+            plan_info.viable_modes.join(", ")
+        )));
 
         frame.render_widget(
             Paragraph::new(lines)
@@ -559,10 +620,26 @@ fn render_advanced_config(frame: &mut Frame, area: Rect, app: &App) {
         height,
     };
 
-    let eff_style = if app.cfg_field == 0 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
-    let gpu_style = if app.cfg_field == 1 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
-    let cpu_style = if app.cfg_field == 2 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
-    let moe_style = if app.cfg_field == 3 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+    let eff_style = if app.cfg_field == 0 {
+        Style::new().fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
+    let gpu_style = if app.cfg_field == 1 {
+        Style::new().fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
+    let cpu_style = if app.cfg_field == 2 {
+        Style::new().fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
+    let moe_style = if app.cfg_field == 3 {
+        Style::new().fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
 
     let mut lines = vec![Line::raw("")];
     lines.push(Line::from(vec![
@@ -582,11 +659,19 @@ fn render_advanced_config(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw(&app.cfg_moe_offload_input),
     ]));
     lines.push(Line::raw(""));
-    lines.push(Line::raw("  Efficiency: bandwidth utilization (default 0.55)"));
-    lines.push(Line::raw("  GPU factor: speed multiplier on GPU (default 1.0)"));
-    lines.push(Line::raw("  Offload factors: hybrid exec speed (defaults 0.5/0.8)"));
+    lines.push(Line::raw(
+        "  Efficiency: bandwidth utilization (default 0.55)",
+    ));
+    lines.push(Line::raw(
+        "  GPU factor: speed multiplier on GPU (default 1.0)",
+    ));
+    lines.push(Line::raw(
+        "  Offload factors: hybrid exec speed (defaults 0.5/0.8)",
+    ));
     lines.push(Line::raw(""));
-    lines.push(Line::raw("  Tab/j/k to move, Enter to apply, Esc to cancel"));
+    lines.push(Line::raw(
+        "  Tab/j/k to move, Enter to apply, Esc to cancel",
+    ));
 
     frame.render_widget(Clear, popup);
     frame.render_widget(
@@ -609,9 +694,21 @@ fn render_simulation(frame: &mut Frame, area: Rect, app: &App) {
         height,
     };
 
-    let vram_style = if app.sim_field == 0 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
-    let ram_style = if app.sim_field == 1 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
-    let cpu_style = if app.sim_field == 2 { Style::new().fg(Color::Cyan).bold() } else { Style::new() };
+    let vram_style = if app.sim_field == 0 {
+        Style::new().fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
+    let ram_style = if app.sim_field == 1 {
+        Style::new().fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
+    let cpu_style = if app.sim_field == 2 {
+        Style::new().fg(Color::Cyan).bold()
+    } else {
+        Style::new()
+    };
 
     let mut lines = vec![Line::raw("")];
     lines.push(Line::from(vec![

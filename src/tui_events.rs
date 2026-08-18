@@ -72,14 +72,34 @@ fn handle_advanced_config_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => app.apply_advanced_config(),
         KeyCode::Tab => app.cfg_field = (app.cfg_field + 1) % 4,
         KeyCode::Down if !ctrl => app.cfg_field = (app.cfg_field + 1) % 4,
-        KeyCode::Up if !ctrl => app.cfg_field = if app.cfg_field == 0 { 3 } else { app.cfg_field - 1 },
+        KeyCode::Up if !ctrl => {
+            app.cfg_field = if app.cfg_field == 0 {
+                3
+            } else {
+                app.cfg_field - 1
+            }
+        }
         KeyCode::Char('j') => app.cfg_field = (app.cfg_field + 1) % 4,
-        KeyCode::Char('k') => app.cfg_field = if app.cfg_field == 0 { 3 } else { app.cfg_field - 1 },
+        KeyCode::Char('k') => {
+            app.cfg_field = if app.cfg_field == 0 {
+                3
+            } else {
+                app.cfg_field - 1
+            }
+        }
         KeyCode::Backspace => match app.cfg_field {
-            0 => { app.cfg_efficiency_input.pop(); }
-            1 => { app.cfg_gpu_factor_input.pop(); }
-            2 => { app.cfg_cpu_offload_input.pop(); }
-            3 => { app.cfg_moe_offload_input.pop(); }
+            0 => {
+                app.cfg_efficiency_input.pop();
+            }
+            1 => {
+                app.cfg_gpu_factor_input.pop();
+            }
+            2 => {
+                app.cfg_cpu_offload_input.pop();
+            }
+            3 => {
+                app.cfg_moe_offload_input.pop();
+            }
             _ => {}
         },
         KeyCode::Char('u') if ctrl => match app.cfg_field {
@@ -107,13 +127,31 @@ fn handle_simulation_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => app.apply_simulation(),
         KeyCode::Tab => app.sim_field = (app.sim_field + 1) % 3,
         KeyCode::Down if !ctrl => app.sim_field = (app.sim_field + 1) % 3,
-        KeyCode::Up if !ctrl => app.sim_field = if app.sim_field == 0 { 2 } else { app.sim_field - 1 },
+        KeyCode::Up if !ctrl => {
+            app.sim_field = if app.sim_field == 0 {
+                2
+            } else {
+                app.sim_field - 1
+            }
+        }
         KeyCode::Char('j') => app.sim_field = (app.sim_field + 1) % 3,
-        KeyCode::Char('k') => app.sim_field = if app.sim_field == 0 { 2 } else { app.sim_field - 1 },
+        KeyCode::Char('k') => {
+            app.sim_field = if app.sim_field == 0 {
+                2
+            } else {
+                app.sim_field - 1
+            }
+        }
         KeyCode::Backspace => match app.sim_field {
-            0 => { app.sim_vram_input.pop(); }
-            1 => { app.sim_ram_input.pop(); }
-            2 => { app.sim_cpu_input.pop(); }
+            0 => {
+                app.sim_vram_input.pop();
+            }
+            1 => {
+                app.sim_ram_input.pop();
+            }
+            2 => {
+                app.sim_cpu_input.pop();
+            }
             _ => {}
         },
         KeyCode::Char('u') if ctrl => match app.sim_field {
@@ -124,7 +162,11 @@ fn handle_simulation_key(app: &mut App, key: KeyEvent) {
         },
         KeyCode::Char('r') if ctrl => {
             // Reset to current hardware
-            app.sim_vram_input = app.hw.gpus.first().map(|g| format!("{:.1}", g.vram_gb))
+            app.sim_vram_input = app
+                .hw
+                .gpus
+                .first()
+                .map(|g| format!("{:.1}", g.vram_gb))
                 .unwrap_or_else(|| "0.0".to_string());
             app.sim_ram_input = format!("{:.1}", app.hw.total_ram_gb);
             app.sim_cpu_input = format!("{}", app.hw.cpu_cores);
