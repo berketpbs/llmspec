@@ -20,6 +20,7 @@ pub enum Mode {
     Detail,
     Plan,
     SimulateHardware,
+    AdvancedConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +159,13 @@ pub struct App {
     pub sim_vram_input: String,
     pub sim_ram_input: String,
     pub sim_cpu_input: String,
+
+    /// Advanced config: which field is active (0=efficiency, 1=gpu_factor, 2=cpu_offload_factor, 3=moe_offload_factor)
+    pub cfg_field: usize,
+    pub cfg_efficiency_input: String,
+    pub cfg_gpu_factor_input: String,
+    pub cfg_cpu_offload_input: String,
+    pub cfg_moe_offload_input: String,
 }
 
 impl App {
