@@ -54,6 +54,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_help(frame, frame.area());
     } else if app.mode == Mode::SimulateHardware {
         render_simulation(frame, frame.area(), app);
+    } else if app.mode == Mode::AdvancedConfig {
+        render_advanced_config(frame, frame.area(), app);
     }
 }
 
