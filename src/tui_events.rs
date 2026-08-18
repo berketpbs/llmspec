@@ -41,6 +41,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             app.mode = Mode::Normal;
         }
         Mode::SimulateHardware => handle_simulation_key(app, key),
+        Mode::AdvancedConfig => handle_advanced_config_key(app, key),
         Mode::Normal | Mode::Detail => handle_normal_key(app, key),
     }
 }
@@ -60,6 +61,41 @@ fn handle_search_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Up => app.move_selection(-1),
         KeyCode::Down => app.move_selection(1),
+        _ => {}
+    }
+}
+
+fn handle_advanced_config_key(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => app.cancel_advanced_config(),
+        KeyCode::Enter => app.apply_advanced_config(),
+        KeyCode::Tab => app.cfg_field = (app.cfg_field + 1) % 4,
+        KeyCode::Down if !ctrl => app.cfg_field = (app.cfg_field + 1) % 4,
+        KeyCode::Up if !ctrl => app.cfg_field = if app.cfg_field == 0 { 3 } else { app.cfg_field - 1 },
+        KeyCode::Char('j') => app.cfg_field = (app.cfg_field + 1) % 4,
+        KeyCode::Char('k') => app.cfg_field = if app.cfg_field == 0 { 3 } else { app.cfg_field - 1 },
+        KeyCode::Backspace => match app.cfg_field {
+            0 => { app.cfg_efficiency_input.pop(); }
+            1 => { app.cfg_gpu_factor_input.pop(); }
+            2 => { app.cfg_cpu_offload_input.pop(); }
+            3 => { app.cfg_moe_offload_input.pop(); }
+            _ => {}
+        },
+        KeyCode::Char('u') if ctrl => match app.cfg_field {
+            0 => app.cfg_efficiency_input.clear(),
+            1 => app.cfg_gpu_factor_input.clear(),
+            2 => app.cfg_cpu_offload_input.clear(),
+            3 => app.cfg_moe_offload_input.clear(),
+            _ => {}
+        },
+        KeyCode::Char(c) if c.is_numeric() || c == '.' => match app.cfg_field {
+            0 => app.cfg_efficiency_input.push(c),
+            1 => app.cfg_gpu_factor_input.push(c),
+            2 => app.cfg_cpu_offload_input.push(c),
+            3 => app.cfg_moe_offload_input.push(c),
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -138,6 +174,7 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
                 app.mode = Mode::Plan;
             }
         }
+        KeyCode::Char('A') => app.open_advanced_config(),
 
         KeyCode::Enter => {
             app.mode = if app.mode == Mode::Detail {

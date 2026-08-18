@@ -202,6 +202,11 @@ impl App {
             sim_vram_input: String::new(),
             sim_ram_input: String::new(),
             sim_cpu_input: String::new(),
+            cfg_field: 0,
+            cfg_efficiency_input: format!("{}", cfg.efficiency),
+            cfg_gpu_factor_input: format!("{}", cfg.gpu_factor),
+            cfg_cpu_offload_input: format!("{}", cfg.cpu_offload_factor),
+            cfg_moe_offload_input: format!("{}", cfg.moe_offload_factor),
         };
         app.recompute();
         app
@@ -412,6 +417,40 @@ impl App {
 
     /// Close simulation popup without applying changes.
     pub fn cancel_simulation(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    /// Open advanced config popup with current values.
+    pub fn open_advanced_config(&mut self) {
+        self.cfg_field = 0;
+        self.cfg_efficiency_input = format!("{:.2}", self.cfg.efficiency);
+        self.cfg_gpu_factor_input = format!("{:.2}", self.cfg.gpu_factor);
+        self.cfg_cpu_offload_input = format!("{:.2}", self.cfg.cpu_offload_factor);
+        self.cfg_moe_offload_input = format!("{:.2}", self.cfg.moe_offload_factor);
+        self.mode = Mode::AdvancedConfig;
+    }
+
+    /// Apply advanced config changes and close popup.
+    pub fn apply_advanced_config(&mut self) {
+        if let Ok(v) = self.cfg_efficiency_input.parse::<f64>() {
+            self.cfg.efficiency = v.max(0.01).min(1.0);
+        }
+        if let Ok(v) = self.cfg_gpu_factor_input.parse::<f64>() {
+            self.cfg.gpu_factor = v.max(0.1).min(2.0);
+        }
+        if let Ok(v) = self.cfg_cpu_offload_input.parse::<f64>() {
+            self.cfg.cpu_offload_factor = v.max(0.1).min(1.0);
+        }
+        if let Ok(v) = self.cfg_moe_offload_input.parse::<f64>() {
+            self.cfg.moe_offload_factor = v.max(0.1).min(1.0);
+        }
+        self.mode = Mode::Normal;
+        self.recompute();
+        self.status = "speed config updated".to_string();
+    }
+
+    /// Close advanced config popup without applying changes.
+    pub fn cancel_advanced_config(&mut self) {
         self.mode = Mode::Normal;
     }
 }
