@@ -249,6 +249,25 @@ fn run(cli: Cli) -> Result<(), String> {
             }
         }
 
+        Some(Command::Plan { model, context, quant, target_tps: _ }) => {
+            let q = model.join(" ");
+            let found = db
+                .find(&q)
+                .ok_or_else(|| format!("no model matches '{q}'"))?;
+            let ctx = context.unwrap_or(found.context_length);
+            let quant_level = match quant.as_deref() {
+                Some(raw) => Quant::parse(raw)
+                    .ok_or_else(|| format!("unknown quantization '{raw}' (try: q8_0, q6_k, q5_k_m, q4_k_m, q3_k_m, q2_k)"))?,
+                None => Quant::Q4KM,
+            };
+            let plan = fit::plan(found, quant_level, ctx, &cfg);
+            if cli.json {
+                println!("{}", display::to_json(&plan));
+            } else {
+                print!("{}", display::render_plan(&plan));
+            }
+        }
+
         None => {
             if cli.cli || cli.json {
                 let results = fit::analyze_all(&db.models, &hw, target, &cfg);
