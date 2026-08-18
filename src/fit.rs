@@ -909,4 +909,3 @@ pub fn plan(model: &Model, quant: Quant, context: u32, cfg: &SpeedConfig) -> Har
         viable_modes,
     }
 }
-}

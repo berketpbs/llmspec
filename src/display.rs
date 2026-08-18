@@ -3,7 +3,7 @@
 use colored::{Color, Colorize};
 use serde::Serialize;
 
-use crate::fit::{FitLevel, FitResult, RunMode};
+use crate::fit::{FitLevel, FitResult, RunMode, HardwarePlan};
 use crate::hardware::Hardware;
 use crate::models::Model;
 
@@ -302,6 +302,26 @@ fn row(label: &str, value: &str) -> String {
 
 fn row_colored(label: &str, value: &str, color: Color) -> String {
     format!("  {:<14} {}\n", label, value.color(color))
+}
+
+pub fn render_plan(plan: &HardwarePlan) -> String {
+    let mut out = format!(
+        "{} @ {}\n",
+        plan.model_name.bold(),
+        format!("{} params, context={}", format_params(plan.params_b, None), format_context(plan.context_length))
+    );
+    out.push('\n');
+    out.push_str(&row("Quantization", &format!("{:?}", plan.quantization)));
+    out.push('\n');
+    out.push_str(&row("Min VRAM (GPU-only)", &format!("{:.1} GB", plan.min_vram_gb)));
+    out.push_str(&row("Recommended VRAM", &format!("{:.1} GB", plan.recommended_vram_gb)));
+    out.push_str(&row("Min RAM (CPU-only)", &format!("{:.1} GB", plan.min_ram_gb)));
+    out.push('\n');
+    out.push_str(&row("Est. tok/s (GPU)", &format!("{:.1}", plan.tps_gpu)));
+    out.push_str(&row("Est. tok/s (CPU)", &format!("{:.1}", plan.tps_cpu)));
+    out.push('\n');
+    out.push_str(&row("Viable modes", &plan.viable_modes.join(", ")));
+    out
 }
 
 fn bar(label: &str, score: f64) -> String {
