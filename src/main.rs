@@ -113,6 +113,21 @@ enum Command {
         #[arg(long)]
         table: bool,
     },
+
+    /// Plan hardware requirements for a model configuration
+    Plan {
+        /// Model name or id, e.g. "Llama-3.1-8B"
+        model: Vec<String>,
+        /// Context length in tokens (default: model's max)
+        #[arg(long, value_name = "TOKENS")]
+        context: Option<u32>,
+        /// Quantization level (default: q4_k_m)
+        #[arg(long, value_name = "QUANT")]
+        quant: Option<String>,
+        /// Target tokens/sec (for planning reverse)
+        #[arg(long, value_name = "TPS")]
+        target_tps: Option<f64>,
+    },
 }
 
 fn main() {

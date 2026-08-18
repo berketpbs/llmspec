@@ -849,3 +849,64 @@ mod tests {
         assert!(rank_of(&reasoning, r1) < rank_of(&general, r1));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Hardware Planning (inverse fit analysis)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HardwarePlan {
+    pub model_name: String,
+    pub params_b: f64,
+    pub context_length: u32,
+    pub quantization: Quant,
+    pub min_vram_gb: f64,
+    pub recommended_vram_gb: f64,
+    pub min_ram_gb: f64,
+    pub tps_gpu: f64,
+    pub tps_cpu: f64,
+    pub viable_modes: Vec<&'static str>,
+}
+
+/// Plan hardware requirements for a model with a given configuration.
+pub fn plan(model: &Model, quant: Quant, context: u32, cfg: &SpeedConfig) -> HardwarePlan {
+    let weights_size = model.weights_gb(quant);
+    let kv_cache_size = model.kv_cache_gb(context);
+    let total_gpu = weights_size + kv_cache_size;
+    let min_vram = total_gpu.ceil();
+    let recommended_vram = (total_gpu * RECOMMENDED_HEADROOM).ceil();
+
+    let mut viable_modes = Vec::new();
+    if min_vram <= 256.0 {
+        viable_modes.push("GPU");
+    }
+
+    if model.is_moe() {
+        viable_modes.push("MoE");
+    }
+
+    viable_modes.push("CPU+GPU");
+    viable_modes.push("CPU");
+
+    let mut hw_gpu = Hardware::detect();
+    hw_gpu.set_vram(256.0);
+    let tps_gpu = estimate_tps(model, &hw_gpu, quant, RunMode::Gpu, 1.0, cfg);
+
+    let mut hw_cpu = Hardware::detect();
+    hw_cpu.gpus.clear();
+    let tps_cpu = estimate_tps(model, &hw_cpu, quant, RunMode::Cpu, 0.0, cfg);
+
+    HardwarePlan {
+        model_name: model.name.clone(),
+        params_b: model.params_b,
+        context_length: context,
+        quantization: quant,
+        min_vram_gb: min_vram,
+        recommended_vram_gb: recommended_vram,
+        min_ram_gb: total_gpu.ceil(),
+        tps_gpu,
+        tps_cpu,
+        viable_modes,
+    }
+}
+}
