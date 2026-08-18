@@ -21,6 +21,7 @@ pub enum Mode {
     Plan,
     SimulateHardware,
     AdvancedConfig,
+    Comparison,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +167,12 @@ pub struct App {
     pub cfg_gpu_factor_input: String,
     pub cfg_cpu_offload_input: String,
     pub cfg_moe_offload_input: String,
+
+    /// Current theme
+    pub theme: crate::tui_ui::Theme,
+
+    /// Marked model for comparison (index into visible)
+    pub marked_model_idx: Option<usize>,
 }
 
 impl App {
@@ -207,6 +214,8 @@ impl App {
             cfg_gpu_factor_input: format!("{}", cfg.gpu_factor),
             cfg_cpu_offload_input: format!("{}", cfg.cpu_offload_factor),
             cfg_moe_offload_input: format!("{}", cfg.moe_offload_factor),
+            theme: crate::tui_ui::Theme::Default,
+            marked_model_idx: None,
         };
         app.recompute();
         app
@@ -452,6 +461,33 @@ impl App {
     /// Close advanced config popup without applying changes.
     pub fn cancel_advanced_config(&mut self) {
         self.mode = Mode::Normal;
+    }
+
+    /// Cycle to next theme.
+    pub fn cycle_theme(&mut self) {
+        self.theme = self.theme.next();
+        self.status = format!("theme: {}", self.theme.name());
+    }
+
+    /// Mark selected model for comparison.
+    pub fn mark_for_comparison(&mut self) {
+        self.marked_model_idx = if self.marked_model_idx == Some(self.selected) {
+            None
+        } else {
+            Some(self.selected)
+        };
+        self.status = if self.marked_model_idx.is_some() {
+            "model marked for comparison".to_string()
+        } else {
+            "comparison mark cleared".to_string()
+        };
+    }
+
+    /// Get the marked model result if it exists.
+    pub fn marked_result(&self) -> Option<&FitResult> {
+        self.marked_model_idx.and_then(|idx| {
+            self.visible.get(idx).and_then(|&result_idx| self.results.get(result_idx))
+        })
     }
 }
 

@@ -11,6 +11,100 @@ use crate::display::{format_context, format_params, format_tps};
 use crate::fit::{FitLevel, FitResult, RunMode};
 use crate::tui_app::{App, Mode};
 
+// ---------------------------------------------------------------------------
+// Theme system
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Theme {
+    Default,
+    Dracula,
+    Nord,
+    Solarized,
+    Gruvbox,
+    Monokai,
+    Tokyo,
+    Ocean,
+    Forest,
+    Sunset,
+}
+
+impl Theme {
+    pub fn all() -> &'static [Theme] {
+        &[
+            Theme::Default,
+            Theme::Dracula,
+            Theme::Nord,
+            Theme::Solarized,
+            Theme::Gruvbox,
+            Theme::Monokai,
+            Theme::Tokyo,
+            Theme::Ocean,
+            Theme::Forest,
+            Theme::Sunset,
+        ]
+    }
+
+    pub fn next(self) -> Theme {
+        let themes = Self::all();
+        let idx = themes.iter().position(|&t| t == self).unwrap_or(0);
+        themes[(idx + 1) % themes.len()]
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Theme::Default => "Default",
+            Theme::Dracula => "Dracula",
+            Theme::Nord => "Nord",
+            Theme::Solarized => "Solarized",
+            Theme::Gruvbox => "Gruvbox",
+            Theme::Monokai => "Monokai",
+            Theme::Tokyo => "Tokyo Night",
+            Theme::Ocean => "Ocean",
+            Theme::Forest => "Forest",
+            Theme::Sunset => "Sunset",
+        }
+    }
+
+    pub fn accent(self) -> Color {
+        match self {
+            Theme::Default => Color::Cyan,
+            Theme::Dracula => Color::Magenta,
+            Theme::Nord => Color::Cyan,
+            Theme::Solarized => Color::Yellow,
+            Theme::Gruvbox => Color::LightRed,
+            Theme::Monokai => Color::Magenta,
+            Theme::Tokyo => Color::Cyan,
+            Theme::Ocean => Color::Blue,
+            Theme::Forest => Color::Green,
+            Theme::Sunset => Color::LightRed,
+        }
+    }
+
+    pub fn header_fg(self) -> Color {
+        match self {
+            Theme::Default => Color::White,
+            Theme::Dracula => Color::LightMagenta,
+            Theme::Nord => Color::LightCyan,
+            Theme::Solarized => Color::Cyan,
+            Theme::Gruvbox => Color::LightYellow,
+            Theme::Monokai => Color::LightGreen,
+            Theme::Tokyo => Color::LightBlue,
+            Theme::Ocean => Color::LightBlue,
+            Theme::Forest => Color::LightGreen,
+            Theme::Sunset => Color::Yellow,
+        }
+    }
+
+    pub fn fit_perfect(self) -> Color {
+        match self {
+            Theme::Dracula => Color::Green,
+            Theme::Sunset => Color::LightYellow,
+            _ => Color::Green,
+        }
+    }
+}
+
 const HEADER: [&str; 12] = [
     "Model", "Provider", "Params", "Quant", "Mode", "Fit", "Inst", "Mem%", "Ctx", "tok/s",
     "Score", "Use Case",
@@ -32,7 +126,7 @@ const WIDTHS: [Constraint; 12] = [
 ];
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let detail_height = if app.mode == Mode::Detail || app.mode == Mode::Plan { 13 } else { 0 };
+    let detail_height = if app.mode == Mode::Detail || app.mode == Mode::Plan || app.mode == Mode::Comparison { 13 } else { 0 };
     let layout = Layout::vertical([
         Constraint::Length(6),
         Constraint::Fill(1),
@@ -47,6 +141,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_detail(frame, detail, app);
     } else if app.mode == Mode::Plan {
         render_plan_view(frame, detail, app);
+    } else if app.mode == Mode::Comparison {
+        render_comparison(frame, detail, app);
     }
     render_status(frame, status, app);
 
@@ -384,6 +480,39 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ),
         popup,
     );
+}
+
+fn render_comparison(frame: &mut Frame, area: Rect, app: &App) {
+    if let (Some(marked), Some(selected)) = (app.marked_result(), app.selected_result()) {
+        let mut lines = vec![];
+        lines.push(Line::from(vec![Span::styled(" Model Comparison ", Style::new().bold())]));
+        lines.push(Line::raw(""));
+
+        let attrs = vec![
+            ("Score", format!("{:.1} vs {:.1}", marked.scores.composite, selected.scores.composite)),
+            ("tok/s", format!("{:.1} vs {:.1}", marked.tokens_per_second, selected.tokens_per_second)),
+            ("Fit", format!("{:?} vs {:?}", marked.fit, selected.fit)),
+            ("Mem%", format!("{:.1}% vs {:.1}%", marked.mem_percent, selected.mem_percent)),
+            ("Params", format!("{:.1}B vs {:.1}B", marked.params_b, selected.params_b)),
+            ("Mode", format!("{:?} vs {:?}", marked.mode, selected.mode)),
+            ("Context", format!("{} vs {}", format_context(marked.context), format_context(selected.context))),
+            ("Quant", format!("{:?} vs {:?}", marked.quant, selected.quant)),
+        ];
+
+        for (attr, vals) in attrs {
+            lines.push(Line::from(format!(" {:12} {}", attr, vals)));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::raw(" Marked (m): ".to_string() + &marked.name));
+        lines.push(Line::raw(" Selected (c): ".to_string() + &selected.name));
+
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(Block::bordered().title(" Comparison (press any key to close) "))
+                .style(Style::new()),
+            area,
+        );
+    }
 }
 
 fn render_plan_view(frame: &mut Frame, area: Rect, app: &App) {

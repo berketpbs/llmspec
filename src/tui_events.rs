@@ -36,8 +36,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             // Any key dismisses the help popup.
             app.mode = Mode::Normal;
         }
-        Mode::Plan => {
-            // Any key exits plan mode.
+        Mode::Plan | Mode::Comparison => {
+            // Any key exits these modes.
             app.mode = Mode::Normal;
         }
         Mode::SimulateHardware => handle_simulation_key(app, key),
@@ -175,6 +175,15 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Char('A') => app.open_advanced_config(),
+        KeyCode::Char('t') => app.cycle_theme(),
+        KeyCode::Char('m') => app.mark_for_comparison(),
+        KeyCode::Char('c') => {
+            if app.marked_result().is_some() && app.selected_result().is_some() {
+                app.mode = Mode::Comparison;
+            } else {
+                app.status = "mark a model first (press m)".to_string();
+            }
+        }
 
         KeyCode::Enter => {
             app.mode = if app.mode == Mode::Detail {
