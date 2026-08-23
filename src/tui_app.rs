@@ -490,10 +490,6 @@ impl App {
             .and_then(|&i| self.db.models.get(i))
     }
 
-    pub fn selected_model(&self) -> Option<&Model> {
-        self.model_for(self.selected_result()?)
-    }
-
     fn clamp_selection(&mut self) {
         self.selected = self
             .selected

@@ -756,21 +756,12 @@ impl ProviderRegistry {
         found
     }
 
-    /// Installed models across every live runtime (cached).
+    /// Installed models across every live runtime.
+    ///
+    /// Reuses whatever [`ProviderRegistry::discover`] already fetched, so the
+    /// common "discover then list" pairing costs one probe rather than two.
+    /// A caller that wants fresh data builds a new registry.
     pub fn list_all_models(&mut self) -> Result<Vec<InstalledModel>, String> {
-        self.collect(false)
-    }
-
-    /// Installed models, ignoring the cache (the TUI's `r` key).
-    pub fn refresh_all_models(&mut self) -> Result<Vec<InstalledModel>, String> {
-        self.collect(true)
-    }
-
-    fn collect(&mut self, force: bool) -> Result<Vec<InstalledModel>, String> {
-        if force {
-            self.cache.clear();
-            self.discovered = None;
-        }
         let now = now_secs();
         let mut all = Vec::new();
         for kind in RuntimeKind::ALL {
