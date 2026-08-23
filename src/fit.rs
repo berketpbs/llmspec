@@ -48,13 +48,19 @@ const SPEED_SCORE_EXPONENT: f64 = 0.5;
 /// reaches 100.
 const CONTEXT_SATURATION: f64 = 4.0;
 
-/// Free memory (percentage points) treated as all the headroom a placement
-/// needs. Above this there is nothing more to gain from leaving VRAM idle.
-const COMFORTABLE_HEADROOM: f64 = 35.0;
+/// Memory use (percent of the pool) up to which a placement is simply safe.
+///
+/// Below this there is nothing to choose between placements: 40% and 70% both
+/// run, and pretending otherwise ranks small models above better ones purely
+/// for leaving the card idle.
+const SAFE_MEMORY_CEILING: f64 = 85.0;
 
-/// Curve exponent for headroom. Concave, so losing the first few points of
-/// free memory costs little and the last few cost a lot.
-const HEADROOM_EXPONENT: f64 = 0.45;
+/// Score for a placement that uses the entire pool.
+///
+/// A floor, not a zero. Running at 98% is worth flagging but it is not
+/// disqualifying — llama.cpp does it routinely — and an aggressive penalty
+/// here buried genuinely better models under smaller ones.
+const TIGHTEST_MEMORY_SCORE: f64 = 55.0;
 
 /// Throughput below which a model is not really usable interactively. Scores
 /// are scaled down towards zero underneath it, so a placement that technically
@@ -597,14 +603,21 @@ pub fn estimate_tps(
 // ---------------------------------------------------------------------------
 
 /// Per-use-case weights for `(quality, speed, fit, context)`.
+///
+/// Memory pressure carries a deliberately small weight. It is a guard rail —
+/// full marks for anything that comfortably fits, a nudge downwards for a
+/// placement cutting it fine — and weighting it like a real ranking axis was
+/// what let a 1B model outrank an 8B one for the crime of using less VRAM.
+/// The weight it gave up went to quality, the dimension that actually
+/// separates models.
 fn weights(target: UseCase) -> (f64, f64, f64, f64) {
     match target {
-        UseCase::General => (0.40, 0.25, 0.20, 0.15),
-        UseCase::Coding => (0.35, 0.20, 0.15, 0.30),
-        UseCase::Reasoning => (0.55, 0.15, 0.15, 0.15),
-        UseCase::Chat => (0.30, 0.35, 0.20, 0.15),
-        UseCase::Multimodal => (0.40, 0.25, 0.20, 0.15),
-        UseCase::Embedding => (0.35, 0.35, 0.20, 0.10),
+        UseCase::General => (0.50, 0.25, 0.10, 0.15),
+        UseCase::Coding => (0.45, 0.20, 0.05, 0.30),
+        UseCase::Reasoning => (0.65, 0.15, 0.05, 0.15),
+        UseCase::Chat => (0.40, 0.35, 0.10, 0.15),
+        UseCase::Multimodal => (0.50, 0.25, 0.10, 0.15),
+        UseCase::Embedding => (0.45, 0.35, 0.10, 0.10),
     }
 }
 
@@ -678,21 +691,38 @@ fn speed_score(tps: f64) -> f64 {
 /// because filling VRAM is the point; only genuinely cutting it fine is
 /// penalised. A tighter plateau would quietly favour a smaller quantization
 /// over a better one purely for using less memory.
-/// Headroom score: how much room the placement leaves.
+/// Memory-pressure score: how much risk the placement carries.
 ///
-/// This dimension answers "how tight is this?", not "did you use the card
-/// well". The latter is already carried by quality and context — a model that
-/// fills VRAM with better weights and a longer window scores higher there —
-/// and rewarding memory use twice was what produced the old plateau.
+/// This is a guard rail, not a ranking axis, and it is shaped accordingly.
+/// Anything up to [`SAFE_MEMORY_CEILING`] scores full marks, because a
+/// placement at 40% of VRAM is not meaningfully safer than one at 70% — both
+/// simply work. Above the ceiling the score falls away sharply: a model
+/// sitting at 95% will fail when the context actually fills or the desktop
+/// compositor asks for VRAM back.
 ///
-/// Headroom is real information: a placement at 95% will run out when the
-/// context actually fills or the desktop compositor asks for VRAM back, while
-/// one at 70% will not. [`COMFORTABLE_HEADROOM`] percent free is treated as
-/// all the room anyone needs; below that the score falls away steeply.
+/// Two earlier shapes were wrong in opposite directions, and both are worth
+/// recording because the mistakes are easy to repeat:
+///
+/// - A flat plateau from 50% to 95% put 80% of the catalog — and 20 of the
+///   top 20 — on exactly 100, so the dimension never broke a tie.
+/// - Rewarding free memory instead fixed the spread but ranked a 1.5B model
+///   above a 42B one, because a small model then scored twice: once for being
+///   cheap to run and again for the memory it left idle.
+///
+/// Using the hardware well is already paid for by quality and context. What
+/// is left for this dimension is the part nothing else measures: whether the
+/// placement is cutting it fine.
 fn fit_score(mem_percent: f64) -> f64 {
-    let headroom = (100.0 - mem_percent).max(0.0);
-    let ratio = (headroom / COMFORTABLE_HEADROOM).min(1.0);
-    100.0 * ratio.powf(HEADROOM_EXPONENT)
+    if mem_percent <= SAFE_MEMORY_CEILING {
+        return 100.0;
+    }
+    // The footprint being measured already includes the KV cache at the
+    // chosen context, so nothing is going to grow into the remaining space.
+    // The only exposure left is estimation error and whatever else wants the
+    // card, which makes this a nudge rather than a verdict — hence the linear
+    // taper to a floor well above zero.
+    let over = ((mem_percent - SAFE_MEMORY_CEILING) / (100.0 - SAFE_MEMORY_CEILING)).min(1.0);
+    100.0 - over * (100.0 - TIGHTEST_MEMORY_SCORE)
 }
 
 /// Context capacity score. Sub-target context is penalised on a square-root
