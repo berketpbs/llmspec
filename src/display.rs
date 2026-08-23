@@ -589,8 +589,11 @@ pub fn render_bench(report: &BenchReport) -> String {
 
     // A ratio on its own is not actionable. Saying what the estimate assumed
     // lets the reader see whether the runtime loaded something else entirely.
-    let assumptions: Vec<&crate::bench::Assumptions> =
-        report.results.iter().filter_map(|r| r.assumed.as_ref()).collect();
+    let assumptions: Vec<&crate::bench::Assumptions> = report
+        .results
+        .iter()
+        .filter_map(|r| r.assumed.as_ref())
+        .collect();
     if !assumptions.is_empty() {
         out.push_str(&format!("\n{}\n", "What the estimate assumed".bold()));
         for assumed in assumptions {
@@ -614,10 +617,10 @@ pub fn render_bench(report: &BenchReport) -> String {
     // Offer the one-line fix rather than leaving the user to work out which
     // knob reconciles the two numbers.
     if let Some(efficiency) = report.suggested_efficiency
-        && report
-            .results
-            .iter()
-            .any(|r| r.estimate_ratio.is_some_and(|ratio| !(0.9..=1.1).contains(&ratio)))
+        && report.results.iter().any(|r| {
+            r.estimate_ratio
+                .is_some_and(|ratio| !(0.9..=1.1).contains(&ratio))
+        })
     {
         out.push_str(&format!(
             "\n  {} {}\n",

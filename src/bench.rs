@@ -73,7 +73,11 @@ pub struct BenchReport {
 }
 
 impl BenchReport {
-    pub fn new(system: HardwareSummary, results: Vec<BenchResult>, current_efficiency: f64) -> Self {
+    pub fn new(
+        system: HardwareSummary,
+        results: Vec<BenchResult>,
+        current_efficiency: f64,
+    ) -> Self {
         let suggested = suggested_efficiency(&results, current_efficiency);
         BenchReport {
             system,
