@@ -224,7 +224,13 @@ fn runtime_check(registry: &mut ProviderRegistry) -> Check {
     }
     let summary = live
         .iter()
-        .map(|r| format!("{} at {} ({} models)", r.name, r.base_url, r.model_count))
+        .map(|r| {
+            let models = match r.model_count {
+                1 => "1 model".to_string(),
+                n => format!("{n} models"),
+            };
+            format!("{} at {} ({models})", r.name, r.base_url)
+        })
         .collect::<Vec<_>>()
         .join("; ");
     Check::ok("Runtimes", summary)

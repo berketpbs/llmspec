@@ -604,8 +604,9 @@ pub fn render_bench(report: &BenchReport) -> String {
         }
         out.push_str(&format!(
             "  {}\n",
-            "A ratio far from 1.00x usually means the runtime loaded a different \
-             quantization than the one assumed here."
+            "If the ratio is far from 1.00x, check these against what the runtime \
+             actually loaded; the remaining gap is the speed model itself, which \
+             is deliberately conservative."
                 .bright_black()
         ));
     }
