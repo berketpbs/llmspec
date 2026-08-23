@@ -579,6 +579,13 @@ fn render_status(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
             ),
             Span::styled("  Enter or Esc to accept · Ctrl-U to clear", dim(palette)),
         ])
+    } else if app.mode.is_popup() {
+        // The normal hints name keys the popup has taken over, so showing
+        // them while one is open would be actively wrong.
+        Line::from(Span::styled(
+            " a popup is open — Esc closes it",
+            dim(palette),
+        ))
     } else {
         let mut spans = vec![Span::styled(STATUS_HINT, dim(palette))];
         if !app.status.is_empty() {
