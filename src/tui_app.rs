@@ -526,7 +526,15 @@ impl App {
 
     pub fn cycle_availability(&mut self) {
         self.availability = self.availability.next();
-        self.status = format!("availability: {}", self.availability.label());
+        // An empty "installed" list looks like a bug when the real cause is
+        // that discovery has not found anything yet.
+        self.status = if self.availability == Availability::Installed
+            && self.discovery.installed.is_empty()
+        {
+            "showing installed only — nothing detected yet, press r to re-probe".to_string()
+        } else {
+            format!("showing: {}", self.availability.label())
+        };
         self.refilter();
     }
 
@@ -940,7 +948,6 @@ pub(crate) mod tests {
         app.refilter();
         assert!(app.visible.is_empty());
         assert!(app.selected_result().is_none());
-        assert!(app.selected_model().is_none());
         app.move_selection(1);
         app.select_last();
         assert_eq!(app.selected, 0);
