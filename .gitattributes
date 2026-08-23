@@ -1,0 +1,49 @@
+# Line endings.
+#
+# Without this file every checkout depends on the local `core.autocrlf`
+# setting, so the same commit looks different on Windows and Linux. That shows
+# up as whole-file diffs, merge conflicts on untouched lines, and CI seeing
+# content the author never wrote.
+#
+# `text=auto eol=lf` normalises everything to LF in the repository while
+# leaving the working tree alone, which is what every tool here expects:
+# rustfmt, GitHub Actions runners, and the JSON catalog.
+* text=auto eol=lf
+
+# Explicit for the file types this project actually contains, so a future
+# addition inherits the right behaviour rather than the heuristic.
+*.rs      text eol=lf
+*.toml    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.py      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.sh      text eol=lf
+*.lock    text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+LICENSE        text eol=lf
+
+# Windows-only scripts must keep CRLF or cmd.exe mis-parses them.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary: never convert, never diff as text.
+*.png  binary
+*.jpg  binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.exe  binary
+*.dll  binary
+*.so   binary
+*.dylib binary
+*.rlib binary
+*.gguf binary
+*.safetensors binary
+
+# Keep generated and vendored files out of diffs and language statistics.
+Cargo.lock       linguist-generated=true
+data/models.json linguist-generated=true
