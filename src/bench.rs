@@ -6,6 +6,7 @@
 
 use serde::Serialize;
 
+use crate::fit::FitResult;
 use crate::hardware::Hardware;
 use crate::providers::{DiscoveredRuntime, ProviderRegistry, Runtime, RuntimeKind, Sample};
 

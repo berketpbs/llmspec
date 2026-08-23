@@ -376,7 +376,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 // runtime's name for the model resolves to a catalog entry.
                 if let Some(found) = db.find_for_runtime(model_ref) {
                     let analysis = fit::analyze(found, &hw, target, &cfg);
-                    bench::attach_estimate(&mut result, analysis.tokens_per_second);
+                    let weights_gb = found.weights_gb(analysis.quant);
+                    bench::attach_estimate(&mut result, &analysis, weights_gb);
                 }
                 results.push(result);
             }
