@@ -448,7 +448,12 @@ mod tests {
         for model in db().models {
             let id = &model.id;
             assert!(model.params_b > 0.0, "{id} has no parameter count");
-            assert!(model.context_length >= 512, "{id} has an implausible context");
+            // Sentence-embedding models legitimately cap at a few hundred
+            // tokens; anything shorter than that is a typo.
+            assert!(
+                model.context_length >= 128,
+                "{id} has an implausible context length"
+            );
             assert!(
                 (1..=5).contains(&model.quality_tier),
                 "{id} has an out-of-range quality tier"
