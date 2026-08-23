@@ -16,7 +16,7 @@ from, where it is exact, and where it is a judgement call.
 | AMD VRAM | `rocm-smi` on Linux; the display driver's registry key on Windows |
 | Intel VRAM | `lspci` on Linux; the display driver's registry key on Windows |
 | Apple Silicon | chip name from the CPU brand; VRAM sized from unified memory |
-| Bandwidth | a table of ~85 GPUs, matched on the reported name |
+| Bandwidth | a table of ~90 GPUs, matched on the reported name |
 
 Two details are easy to get wrong and are handled explicitly:
 
