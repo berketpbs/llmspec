@@ -298,6 +298,76 @@ fn run(cli: Cli) -> Result<(), String> {
             }
         }
 
+        Some(Command::Doctor) => {
+            let mut registry = ProviderRegistry::new();
+            let report = doctor::run(&hw, &db, &mut registry);
+            if cli.json {
+                println!("{}", display::to_json(&report));
+            } else {
+                print!("{}", display::render_doctor(&report));
+            }
+            // A clean report exits 0; warnings are worth a non-zero status so
+            // a CI check can gate on detection actually having worked.
+            if !report.is_clean() {
+                std::process::exit(2);
+            }
+        }
+
+        Some(Command::Runtimes) => {
+            let mut registry = ProviderRegistry::new();
+            let found = registry.discover();
+            if cli.json {
+                println!("{}", display::to_json(&found));
+            } else {
+                print!("{}", display::render_runtimes(&found));
+            }
+        }
+
+        Some(Command::Bench {
+            model,
+            all,
+            runs,
+            tokens,
+        }) => {
+            let mut registry = ProviderRegistry::new();
+            let discovered = bench::select_runtime(&mut registry, runtime)?;
+            let client = Runtime::with_url(discovered.kind, &discovered.base_url);
+
+            let targets = bench_targets(&client, &model.join(" "), *all)?;
+            let mut results = Vec::new();
+            for model_ref in &targets {
+                if !cli.json {
+                    eprintln!(
+                        "benchmarking {model_ref} on {} ({} runs)...",
+                        discovered.name, runs
+                    );
+                }
+                let mut result = bench::run_one(&client, model_ref, *runs, *tokens)?;
+                // Compare against what llmspec would have predicted, when the
+                // model can be matched to a catalog entry.
+                if let Some(found) = db.find(model_ref) {
+                    let analysis = fit::analyze(found, &hw, target, &cfg);
+                    bench::attach_estimate(&mut result, analysis.tokens_per_second);
+                }
+                results.push(result);
+            }
+
+            let report = bench::BenchReport {
+                system: bench::HardwareSummary::from(&hw),
+                results,
+            };
+            if cli.json {
+                println!("{}", display::to_json(&report));
+            } else {
+                print!("{}", display::render_bench(&report));
+            }
+        }
+
+        Some(Command::Serve { host, port }) => {
+            let mut server = serve::Server::new(hw, db, cfg, target);
+            server.listen(host, *port)?;
+        }
+
         Some(Command::Plan {
             model,
             context,
