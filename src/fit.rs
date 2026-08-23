@@ -674,7 +674,7 @@ fn quality_score(model: &Model, quant: Quant, target: UseCase) -> f64 {
 /// Throughput score.
 ///
 /// [`COMFORTABLE_TPS`] — roughly twice reading speed — scores
-/// [`COMFORTABLE_SCORE`] rather than a full 100. Past it the curve keeps
+/// [`COMFORTABLE_TPS_SCORE`] rather than a full 100. Past it the curve keeps
 /// rising, but logarithmically: the difference between 20 and 40 tok/s is felt,
 /// the difference between 80 and 100 is not.
 ///
@@ -687,10 +687,10 @@ fn speed_score(tps: f64) -> f64 {
         return 0.0;
     }
     if tps <= COMFORTABLE_TPS {
-        COMFORTABLE_SCORE * (tps / COMFORTABLE_TPS).powf(SPEED_SCORE_EXPONENT)
+        COMFORTABLE_TPS_SCORE * (tps / COMFORTABLE_TPS).powf(SPEED_SCORE_EXPONENT)
     } else {
         let headroom = (tps / COMFORTABLE_TPS).ln() / SPEED_SATURATION.ln();
-        (COMFORTABLE_SCORE + (100.0 - COMFORTABLE_SCORE) * headroom).min(100.0)
+        (COMFORTABLE_TPS_SCORE + (100.0 - COMFORTABLE_TPS_SCORE) * headroom).min(100.0)
     }
 }
 
@@ -739,7 +739,7 @@ fn fit_score(mem_percent: f64) -> f64 {
 /// is worth half the points rather than a quarter.
 /// Context score.
 ///
-/// Meeting the use case's target scores [`COMFORTABLE_SCORE`]; beyond it the
+/// Meeting the use case's target scores [`TARGET_CONTEXT_SCORE`]; beyond it the
 /// curve keeps rising logarithmically up to [`CONTEXT_SATURATION`] times the
 /// target, because more room genuinely helps but with sharply diminishing
 /// value. Below the target the penalty is a square root, so 16k against a 32k
@@ -754,10 +754,10 @@ fn context_score(context: u32, target: UseCase) -> f64 {
         return 0.0;
     }
     if ratio <= 1.0 {
-        COMFORTABLE_SCORE * ratio.sqrt()
+        TARGET_CONTEXT_SCORE * ratio.sqrt()
     } else {
         let headroom = ratio.ln() / CONTEXT_SATURATION.ln();
-        (COMFORTABLE_SCORE + (100.0 - COMFORTABLE_SCORE) * headroom).min(100.0)
+        (TARGET_CONTEXT_SCORE + (100.0 - TARGET_CONTEXT_SCORE) * headroom).min(100.0)
     }
 }
 
