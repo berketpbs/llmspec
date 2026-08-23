@@ -1004,27 +1004,3 @@ mod tests {
         }
     }
 }
-
-#[cfg(test)]
-mod visual_check {
-    use super::*;
-    use crate::tui_app::tests::test_app;
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-
-    #[test]
-    #[ignore = "prints a frame for manual inspection: cargo test dump -- --ignored --nocapture"]
-    fn dump() {
-        let mut app = test_app();
-        app.mode = Mode::Detail;
-        let mut terminal = Terminal::new(TestBackend::new(150, 46)).unwrap();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        for y in 0..buffer.area.height {
-            let line: String = (0..buffer.area.width)
-                .map(|x| buffer[(x, y)].symbol().to_string())
-                .collect();
-            println!("{}", line.trim_end());
-        }
-    }
-}
