@@ -1578,7 +1578,11 @@
         "reasoning"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 36,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
