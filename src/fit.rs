@@ -912,6 +912,10 @@ pub struct HardwarePlan {
     pub params_b: f64,
     pub context_length: u32,
     pub quantization: Quant,
+    /// The weight file itself — what the download costs.
+    pub weights_gb: f64,
+    /// KV cache at this context, which exists only while the model is loaded.
+    pub kv_cache_gb: f64,
     pub min_vram_gb: f64,
     pub recommended_vram_gb: f64,
     pub min_ram_gb: f64,
@@ -953,6 +957,8 @@ pub fn plan(model: &Model, quant: Quant, context: u32, cfg: &SpeedConfig) -> Har
         params_b: model.params_b,
         context_length: context,
         quantization: quant,
+        weights_gb: weights_size,
+        kv_cache_gb: kv_cache_size,
         min_vram_gb: min_vram,
         recommended_vram_gb: recommended_vram,
         min_ram_gb: total_gpu.ceil(),

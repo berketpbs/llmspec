@@ -385,33 +385,56 @@ fn row_colored(label: &str, value: &str, color: Color) -> String {
     format!("  {:<14} {}\n", label, value.color(color))
 }
 
+/// What a given model configuration would demand of any machine.
 pub fn render_plan(plan: &HardwarePlan) -> String {
-    let details = format!(
-        "{} params, context={}",
-        format_params(plan.params_b, None),
-        format_context(plan.context_length)
-    );
-    let mut out = format!("{} @ {}\n", plan.model_name.bold(), details);
-    out.push('\n');
-    out.push_str(&row("Quantization", &format!("{:?}", plan.quantization)));
-    out.push('\n');
+    let mut out = format!("{}\n", plan.model_name.bold().underline());
+    out.push_str(&format!(
+        "  {}\n\n",
+        format!(
+            "{} parameters at {}, {} context",
+            format_params(plan.params_b, None),
+            plan.quantization.label(),
+            format_context(plan.context_length)
+        )
+        .bright_black()
+    ));
+
+    out.push_str(&format!("{}\n", "Storage".bold()));
+    out.push_str(&row("Weights", &format!("{} on disk", format_size_gb(plan.weights_gb))));
     out.push_str(&row(
-        "Min VRAM (GPU-only)",
-        &format!("{:.1} GB", plan.min_vram_gb),
+        "KV cache",
+        &format!("{} at this context", format_size_gb(plan.kv_cache_gb)),
+    ));
+
+    out.push_str(&format!("\n{}\n", "Memory required".bold()));
+    out.push_str(&row(
+        "Minimum VRAM",
+        &format!("{:.1} GB to hold it all on the GPU", plan.min_vram_gb),
     ));
     out.push_str(&row(
-        "Recommended VRAM",
-        &format!("{:.1} GB", plan.recommended_vram_gb),
+        "Advised VRAM",
+        &format!(
+            "{:.1} GB, leaving headroom for the runtime",
+            plan.recommended_vram_gb
+        ),
     ));
     out.push_str(&row(
-        "Min RAM (CPU-only)",
-        &format!("{:.1} GB", plan.min_ram_gb),
+        "Minimum RAM",
+        &format!("{:.1} GB to run it on the CPU instead", plan.min_ram_gb),
     ));
-    out.push('\n');
-    out.push_str(&row("Est. tok/s (GPU)", &format!("{:.1}", plan.tps_gpu)));
-    out.push_str(&row("Est. tok/s (CPU)", &format!("{:.1}", plan.tps_cpu)));
-    out.push('\n');
-    out.push_str(&row("Viable modes", &plan.viable_modes.join(", ")));
+
+    out.push_str(&format!("\n{}\n", "Estimated throughput".bold()));
+    out.push_str(&row(
+        "On a fast GPU",
+        &format!("~{} tok/s", format_tps(plan.tps_gpu)),
+    ));
+    out.push_str(&row(
+        "On this CPU",
+        &format!("~{} tok/s", format_tps(plan.tps_cpu)),
+    ));
+
+    out.push_str(&format!("\n{}\n", "Viable run modes".bold()));
+    out.push_str(&row("Modes", &plan.viable_modes.join(", ")));
     out
 }
 
