@@ -146,7 +146,7 @@ MODELS = [
     m("deepseek-ai/DeepSeek-R1-0528", "DeepSeek R1 0528", "DeepSeek", 685.0,
       131072, "reasoning", "mit", "2025-05", ["reasoning"], 5, True, None,
       active_params_b=37.0),
-    m("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B-0528", "DeepSeek R1 Distill Qwen3 8B",
+    m("deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", "DeepSeek R1 0528 Qwen3 8B",
       "DeepSeek", 8.19, 131072, "reasoning", "mit", "2025-05", ["reasoning"],
       4, True, "deepseek-r1:8b"),
     m("deepseek-ai/DeepSeek-Prover-V2-7B", "DeepSeek Prover V2 7B", "DeepSeek",
