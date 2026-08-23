@@ -39,7 +39,7 @@ const COLUMNS: &[(&str, Constraint)] = &[
     ("Score", Constraint::Length(5)),
 ];
 
-pub fn draw(frame: &mut Frame, app: &mut App) {
+pub fn draw(frame: &mut Frame, app: &App) {
     let palette = app.theme.palette();
     let panel_height = if app.mode.is_panel() { PANEL_HEIGHT } else { 0 };
 
@@ -775,7 +775,7 @@ mod tests {
     use crate::tui_theme::Theme;
 
     /// Render one frame and return the screen as text.
-    fn screen(app: &mut App, width: u16, height: u16) -> String {
+    fn screen(app: &App, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| draw(frame, app)).unwrap();
         let buffer = terminal.backend().buffer().clone();
