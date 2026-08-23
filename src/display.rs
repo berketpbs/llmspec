@@ -65,6 +65,17 @@ pub fn format_context(tokens: u32) -> String {
     }
 }
 
+/// A file or memory size, in the units a person would say out loud.
+pub fn format_size_gb(gb: f64) -> String {
+    if gb < 1.0 {
+        format!("{:.0} MB", gb * 1024.0)
+    } else if gb < 10.0 {
+        format!("{gb:.1} GB")
+    } else {
+        format!("{gb:.0} GB")
+    }
+}
+
 pub fn format_tps(tps: f64) -> String {
     if tps >= 100.0 {
         format!("{tps:.0}")

@@ -793,7 +793,7 @@ fn speed_form(cfg: &SpeedConfig) -> Form {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::hardware::Backend;
 
