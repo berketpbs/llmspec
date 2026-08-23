@@ -8,7 +8,7 @@ use crate::doctor::{Report, Severity};
 use crate::fit::{FitLevel, FitResult, HardwarePlan, RunMode};
 use crate::hardware::Hardware;
 use crate::models::Model;
-use crate::providers::DiscoveredRuntime;
+use crate::providers::{DiscoveredRuntime, RuntimeKind};
 
 const COL_RANK: usize = 3;
 const COL_NAME: usize = 30;
@@ -247,7 +247,15 @@ pub fn render_model_list(models: &[Model]) -> String {
 // Detail view
 // ---------------------------------------------------------------------------
 
-pub fn render_detail(result: &FitResult, model: &Model) -> String {
+/// Full report for one model.
+///
+/// `runtime` is the local runtime whose commands should be suggested; passing
+/// `None` omits the "how to run it" section rather than guessing.
+pub fn render_detail(
+    result: &FitResult,
+    model: &Model,
+    runtime: Option<RuntimeKind>,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("{}\n", result.name.bold().underline()));
     out.push_str(&format!("  {}\n\n", result.model_id.bright_black()));
@@ -271,9 +279,6 @@ pub fn render_detail(result: &FitResult, model: &Model) -> String {
     if !model.capabilities.is_empty() {
         out.push_str(&row("Capabilities", &model.capabilities.join(", ")));
     }
-    if let Some(tag) = &result.ollama {
-        out.push_str(&row("Ollama tag", tag));
-    }
 
     out.push_str(&format!("\n{}\n", "Fit on this machine".bold()));
     out.push_str(&row_colored(
@@ -287,25 +292,72 @@ pub fn render_detail(result: &FitResult, model: &Model) -> String {
         mode_color(result.mode),
     ));
     out.push_str(&row("Quantization", result.quant.label()));
-    out.push_str(&row("Context used", &format_context(result.context)));
+
+    // What the file costs to fetch and keep is a separate question from what
+    // it costs to run, and people budget for both.
+    out.push_str(&row(
+        "Download size",
+        &format!("{} on disk", format_size_gb(result.download_gb)),
+    ));
     out.push_str(&row(
         "Memory needed",
         &format!(
-            "{:.1} GB total, {:.1} GB resident",
-            result.required_gb, result.resident_gb
+            "{:.1} GB total, {:.1} GB resident ({:.0}% of the pool)",
+            result.required_gb, result.resident_gb, result.mem_percent
         ),
     ));
-    out.push_str(&row(
-        "Memory used",
-        &format!("{:.0}% of the pool", result.mem_percent),
-    ));
+
+    let context = format!(
+        "{} of {} maximum",
+        format_context(result.context),
+        format_context(result.max_context)
+    );
+    if result.context_is_reduced() {
+        out.push_str(&row_colored("Context", &context, Color::Yellow));
+        out.push_str(&format!(
+            "  {:<14} {}\n",
+            "",
+            "this hardware cannot hold the model's full context".bright_black()
+        ));
+    } else {
+        out.push_str(&row("Context", &format!("{context} (full)")));
+    }
+
     out.push_str(&row(
         "Throughput",
         &format!(
-            "~{} tok/s (estimated)",
+            "~{} tok/s estimated — check with `llmspec bench`",
             format_tps(result.tokens_per_second)
         ),
     ));
+
+    if let Some(kind) = runtime {
+        out.push_str(&format!("\n{}\n", "How to run it".bold()));
+        match model_reference(result, kind) {
+            Some(reference) => {
+                out.push_str(&row("Runtime", kind.label()));
+                out.push_str(&row_colored(
+                    "Install",
+                    &kind.install_command(&reference),
+                    Color::Green,
+                ));
+                out.push_str(&row_colored(
+                    "Run",
+                    &kind.run_command(&reference),
+                    Color::Green,
+                ));
+            }
+            None => {
+                out.push_str(&row(
+                    "Runtime",
+                    &format!(
+                        "{} has no packaged build of this model — use llama.cpp with a GGUF",
+                        kind.label()
+                    ),
+                ));
+            }
+        }
+    }
 
     out.push_str(&format!("\n{}\n", "Scores".bold()));
     out.push_str(&bar("Quality", result.scores.quality));
@@ -318,6 +370,15 @@ pub fn render_detail(result: &FitResult, model: &Model) -> String {
         format!("{:.1}", result.scores.composite).bold()
     ));
     out
+}
+
+/// The name a runtime knows this model by, if it knows it at all.
+pub fn model_reference(result: &FitResult, kind: RuntimeKind) -> Option<String> {
+    if kind.uses_own_registry() {
+        result.ollama.clone()
+    } else {
+        Some(result.model_id.clone())
+    }
 }
 
 fn row(label: &str, value: &str) -> String {
