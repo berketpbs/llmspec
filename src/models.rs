@@ -332,8 +332,34 @@ impl ModelDb {
         serde_json::from_str(EMBEDDED_DB).expect("embedded model database is valid JSON")
     }
 
+    /// The embedded database plus any models the user has added locally.
+    pub fn load() -> ModelDb {
+        let mut db = ModelDb::embedded();
+        db.merge(crate::config::load_custom_models());
+        db
+    }
+
+    /// Add models, letting a user entry replace an embedded one with the same
+    /// id — that is how a stale shipped record gets corrected locally.
+    pub fn merge(&mut self, extra: Vec<Model>) {
+        for model in extra {
+            match self.models.iter_mut().find(|m| m.id == model.id) {
+                Some(existing) => *existing = model,
+                None => self.models.push(model),
+            }
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.models.len()
+    }
+
+    /// Number of distinct model publishers in the catalog.
+    pub fn provider_count(&self) -> usize {
+        let mut providers: Vec<&str> = self.models.iter().map(|m| m.provider.as_str()).collect();
+        providers.sort_unstable();
+        providers.dedup();
+        providers.len()
     }
 
     pub fn find(&self, query: &str) -> Option<&Model> {
@@ -391,6 +417,35 @@ mod tests {
             resident < full / 2.0,
             "full {full:.1} vs resident {resident:.1}"
         );
+    }
+
+    #[test]
+    fn provider_count_deduplicates() {
+        let db = db();
+        assert!(db.provider_count() > 1);
+        assert!(db.provider_count() <= db.len());
+    }
+
+    #[test]
+    fn merging_adds_new_models_and_replaces_matching_ids() {
+        let mut db = db();
+        let before = db.len();
+        let existing_id = db.models[0].id.clone();
+
+        let replacement = Model {
+            name: "Renamed By User".to_string(),
+            ..db.models[0].clone()
+        };
+        let addition = Model {
+            id: "local/private-model".to_string(),
+            name: "Private Model".to_string(),
+            ..db.models[0].clone()
+        };
+        db.merge(vec![replacement, addition]);
+
+        assert_eq!(db.len(), before + 1, "only the new id should grow the db");
+        assert_eq!(db.find(&existing_id).unwrap().name, "Renamed By User");
+        assert!(db.find("local/private-model").is_some());
     }
 
     #[test]

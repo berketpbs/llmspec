@@ -670,15 +670,6 @@ impl ProviderRegistry {
     }
 }
 
-/// Convenience constructor kept for the Ollama-specific call sites.
-pub struct Ollama;
-
-impl Ollama {
-    pub fn default() -> Runtime {
-        Runtime::new(RuntimeKind::Ollama)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

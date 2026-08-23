@@ -60,9 +60,6 @@ pub enum Vendor {
     Nvidia,
     Amd,
     Intel,
-    /// Placeholder: Apple Silicon detection is out of scope for v1, but the
-    /// bandwidth table and the Metal backend already carry entries for it.
-    #[allow(dead_code)]
     Apple,
     Unknown,
 }
@@ -171,11 +168,14 @@ const GPU_TABLE: &[(&str, f64, f64)] = &[
     ("arc a770", 560.0, 16.0),
     ("arc a750", 512.0, 8.0),
     ("arc a380", 186.0, 6.0),
-    // Apple (placeholder: Apple Silicon is out of scope for v1)
-    ("m4 max", 546.0, 48.0),
+    ("arc a580", 512.0, 8.0),
+    ("arc b570", 380.0, 10.0),
+    // Apple Silicon. The VRAM column is the base configuration; real machines
+    // are sized from the unified memory pool at detection time.
+    ("m4 max", 546.0, 36.0),
     ("m4 pro", 273.0, 24.0),
     ("m4", 120.0, 16.0),
-    ("m3 ultra", 800.0, 96.0),
+    ("m3 ultra", 819.0, 96.0),
     ("m3 max", 400.0, 36.0),
     ("m3 pro", 150.0, 18.0),
     ("m3", 100.0, 8.0),
@@ -188,6 +188,13 @@ const GPU_TABLE: &[(&str, f64, f64)] = &[
     ("m1 pro", 200.0, 16.0),
     ("m1", 68.0, 8.0),
 ];
+
+/// Fraction of unified memory an Apple Silicon Mac will hand to the GPU.
+///
+/// macOS caps `iogpu.wired_limit_mb` at roughly 75% of physical RAM by
+/// default; treating the whole pool as VRAM would promise placements the OS
+/// refuses to make.
+const APPLE_UNIFIED_VRAM_FRACTION: f64 = 0.75;
 
 fn lookup_gpu(name: &str) -> Option<(f64, f64)> {
     let lower = name.to_ascii_lowercase();
@@ -277,7 +284,13 @@ impl Hardware {
         let total_ram_gb = sys.total_memory() as f64 / BYTES_PER_GB;
         let available_ram_gb = sys.available_memory() as f64 / BYTES_PER_GB;
 
-        let mut gpus = detect_nvidia();
+        // Apple Silicon first: on those machines the GPU is the same memory
+        // the CPU uses, so probing discrete-GPU tools would find nothing and
+        // wrongly report a CPU-only box.
+        let mut gpus = detect_apple(&cpu_brand, total_ram_gb);
+        if gpus.is_empty() {
+            gpus = detect_nvidia();
+        }
         if gpus.is_empty() {
             gpus.extend(detect_amd());
         }
@@ -416,9 +429,37 @@ fn detect_nvidia() -> Vec<Gpu> {
         .collect()
 }
 
-/// `rocm-smi` (Linux only). Windows AMD detection is not implemented yet;
-/// `--memory` covers it in the meantime.
+/// Apple Silicon: one integrated GPU sharing the system's unified memory.
+///
+/// `sysinfo` already reports the chip name as the CPU brand ("Apple M3 Pro"),
+/// so no extra process is needed to identify the part — only to size the pool,
+/// which `total_ram_gb` already carries.
+fn detect_apple(cpu_brand: &str, total_ram_gb: f64) -> Vec<Gpu> {
+    if !cfg!(target_os = "macos") {
+        return Vec::new();
+    }
+    let lower = cpu_brand.to_ascii_lowercase();
+    if !lower.contains("apple") {
+        // An Intel Mac has no unified-memory GPU worth reporting.
+        return Vec::new();
+    }
+    let table = lookup_gpu(cpu_brand);
+    vec![Gpu {
+        name: cpu_brand.to_string(),
+        vendor: Vendor::Apple,
+        // Real capacity comes from the installed memory, not the table's
+        // base-configuration figure.
+        vram_gb: (total_ram_gb * APPLE_UNIFIED_VRAM_FRACTION).max(0.0),
+        bandwidth_gb_s: table.map(|(bw, _)| bw),
+        vram_estimated: true,
+    }]
+}
+
+/// AMD GPUs: `rocm-smi` on Linux, WMI on Windows.
 fn detect_amd() -> Vec<Gpu> {
+    if cfg!(target_os = "windows") {
+        return detect_windows_gpus(Vendor::Amd);
+    }
     if !cfg!(target_os = "linux") {
         return Vec::new();
     }
@@ -462,8 +503,11 @@ fn detect_amd() -> Vec<Gpu> {
     gpus
 }
 
-/// Intel Arc discrete cards expose VRAM through sysfs on Linux.
+/// Intel Arc: `lspci` on Linux, WMI on Windows.
 fn detect_intel() -> Vec<Gpu> {
+    if cfg!(target_os = "windows") {
+        return detect_windows_gpus(Vendor::Intel);
+    }
     if !cfg!(target_os = "linux") {
         return Vec::new();
     }
