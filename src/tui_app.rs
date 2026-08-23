@@ -911,7 +911,7 @@ mod tests {
             .iter()
             .find_map(|r| r.ollama.clone())
             .expect("catalog has ollama tags");
-        app.installed.insert(&tag);
+        app.discovery.installed.insert(&tag);
         app.refilter();
         assert_eq!(app.visible.len(), 1);
     }
@@ -1146,7 +1146,7 @@ mod tests {
             .unwrap();
         app.poll_events();
         assert!(app.download_tag.is_none());
-        assert!(app.installed.contains(Some("qwen2.5:7b"), "whatever/model"));
+        assert!(app.discovery.installed.contains(Some("qwen2.5:7b"), "whatever/model"));
         assert!(app.status.contains("pulled"));
     }
 
@@ -1176,7 +1176,7 @@ mod tests {
             .send(BackgroundEvent::InstalledRefreshed(Ok(index)))
             .unwrap();
         app.poll_events();
-        assert_eq!(app.installed.len(), 2);
+        assert_eq!(app.discovery.installed.len(), 2);
         assert!(app.status.contains('2'));
         assert!(!app.refreshing, "the refresh slot is released");
     }
@@ -1184,13 +1184,13 @@ mod tests {
     #[test]
     fn a_failed_discovery_is_reported_without_wiping_what_is_known() {
         let mut app = test_app();
-        app.installed.insert("qwen2.5:7b");
+        app.discovery.installed.insert("qwen2.5:7b");
         app.refreshing = true;
         app.events_tx
             .send(BackgroundEvent::InstalledRefreshed(Err("no runtime".into())))
             .unwrap();
         app.poll_events();
-        assert_eq!(app.installed.len(), 1, "known models are not lost");
+        assert_eq!(app.discovery.installed.len(), 1, "known models are not lost");
         assert!(app.status.contains("no runtime"));
     }
 
