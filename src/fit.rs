@@ -694,20 +694,13 @@ fn speed_score(tps: f64) -> f64 {
     }
 }
 
-/// Memory-efficiency score. Well under half the pool means the hardware is
-/// being left on the table — a bigger model or a higher quantization would
-/// have fit — so it is scored down. The plateau runs all the way to 95%
-/// because filling VRAM is the point; only genuinely cutting it fine is
-/// penalised. A tighter plateau would quietly favour a smaller quantization
-/// over a better one purely for using less memory.
 /// Memory-pressure score: how much risk the placement carries.
 ///
 /// This is a guard rail, not a ranking axis, and it is shaped accordingly.
 /// Anything up to [`SAFE_MEMORY_CEILING`] scores full marks, because a
 /// placement at 40% of VRAM is not meaningfully safer than one at 70% — both
-/// simply work. Above the ceiling the score falls away sharply: a model
-/// sitting at 95% will fail when the context actually fills or the desktop
-/// compositor asks for VRAM back.
+/// simply work. Above the ceiling the score tapers towards
+/// [`TIGHTEST_MEMORY_SCORE`].
 ///
 /// Two earlier shapes were wrong in opposite directions, and both are worth
 /// recording because the mistakes are easy to repeat:
