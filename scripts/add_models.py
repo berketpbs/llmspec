@@ -97,9 +97,11 @@ MODELS = [
       layers=80, hidden_size=8192, kv_heads=8, head_dim=128),
 
     # -- Alibaba Qwen -------------------------------------------------------
+    # No Ollama tag: `qwen3:30b-a3b` belongs to the base Qwen3-30B-A3B, and
+    # claiming it here would download a different model than the one shown.
     m("Qwen/Qwen3-30B-A3B-Instruct-2507", "Qwen3 30B A3B Instruct 2507",
       "Alibaba Qwen", 30.5, 262144, "general", "apache-2.0", "2025-07",
-      ["tools"], 4, True, "qwen3:30b-a3b", active_params_b=3.3,
+      ["tools"], 4, True, None, active_params_b=3.3,
       layers=48, kv_heads=4, head_dim=128),
     m("Qwen/Qwen3-Coder-30B-A3B-Instruct", "Qwen3 Coder 30B A3B",
       "Alibaba Qwen", 30.5, 262144, "coding", "apache-2.0", "2025-07",
