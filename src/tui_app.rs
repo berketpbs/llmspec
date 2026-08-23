@@ -8,7 +8,9 @@ use crate::config::{Config, PersistedSpeed};
 use crate::fit::{self, FitLevel, FitResult, SpeedConfig};
 use crate::hardware::Hardware;
 use crate::models::{Model, ModelDb, UseCase};
-use crate::providers::{InstalledIndex, ProviderRegistry, Runtime, RuntimeKind};
+use crate::providers::{
+    DiscoveredRuntime, InstalledIndex, ProviderRegistry, Runtime, RuntimeKind,
+};
 use crate::tui_form::{Field, Form};
 use crate::tui_theme::Theme;
 
@@ -24,8 +26,15 @@ pub enum BackgroundEvent {
         tag: String,
         result: Result<(), String>,
     },
-    /// The set of locally installed models was (re)read.
-    InstalledRefreshed(Result<InstalledIndex, String>),
+    /// Local runtimes were probed and their models listed.
+    Discovered(Result<Discovery, String>),
+}
+
+/// What one pass of runtime discovery found.
+#[derive(Debug, Default, Clone)]
+pub struct Discovery {
+    pub installed: InstalledIndex,
+    pub runtimes: Vec<DiscoveredRuntime>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,9 +257,8 @@ pub struct App {
     pub should_quit: bool,
     pub theme: Theme,
 
-    /// Models a local runtime reports as already downloaded.
-    pub installed: InstalledIndex,
-    providers: ProviderRegistry,
+    /// What the last runtime probe found. Empty until discovery completes.
+    pub discovery: Discovery,
     /// Tag currently downloading, if any.
     pub download_tag: Option<String>,
     events_rx: mpsc::Receiver<BackgroundEvent>,
@@ -296,8 +304,7 @@ impl App {
             db,
             cfg,
             target,
-            installed: InstalledIndex::default(),
-            providers: ProviderRegistry::new(),
+            discovery: Discovery::default(),
             download_tag: None,
             events_rx,
             events_tx,
@@ -325,8 +332,12 @@ impl App {
         let tx = self.events_tx.clone();
         thread::spawn(move || {
             let mut registry = ProviderRegistry::new();
-            let index = registry.refresh_all_models().map(InstalledIndex::from_models);
-            let _ = tx.send(BackgroundEvent::InstalledRefreshed(index));
+            let runtimes = registry.discover();
+            let result = registry.list_all_models().map(|models| Discovery {
+                installed: InstalledIndex::from_models(models),
+                runtimes,
+            });
+            let _ = tx.send(BackgroundEvent::Discovered(result));
         });
     }
 
@@ -414,7 +425,56 @@ impl App {
 
     /// True when a local runtime already has this model on disk.
     pub fn is_installed(&self, result: &FitResult) -> bool {
-        self.installed.contains(result.ollama.as_deref(), &result.model_id)
+        self.discovery
+            .installed
+            .contains(result.ollama.as_deref(), &result.model_id)
+    }
+
+    /// The runtime whose commands the detail panel should suggest.
+    ///
+    /// Prefers whatever is actually running. With nothing running, a model
+    /// with an Ollama tag gets Ollama — by far the most common way to run one
+    /// locally — and anything else gets llama.cpp, which loads any GGUF.
+    pub fn suggested_runtime(&self, result: &FitResult) -> RuntimeKind {
+        if let Some(live) = self.discovery.runtimes.first() {
+            return live.kind;
+        }
+        if result.ollama.is_some() {
+            RuntimeKind::Ollama
+        } else {
+            RuntimeKind::LlamaCpp
+        }
+    }
+
+    /// The name that runtime knows this model by.
+    pub fn model_reference(&self, result: &FitResult, kind: RuntimeKind) -> Option<String> {
+        if kind.uses_own_registry() {
+            // A registry-backed runtime cannot be handed an upstream repo id;
+            // without a tag there is no command worth printing.
+            result.ollama.clone()
+        } else {
+            Some(result.model_id.clone())
+        }
+    }
+
+    /// Install and run commands for the selected model, when they exist.
+    pub fn commands_for(&self, result: &FitResult) -> Option<(RuntimeKind, String, String)> {
+        let kind = self.suggested_runtime(result);
+        let reference = self.model_reference(result, kind)?;
+        Some((
+            kind,
+            kind.install_command(&reference),
+            kind.run_command(&reference),
+        ))
+    }
+
+    fn runtime_names(discovery: &Discovery) -> String {
+        discovery
+            .runtimes
+            .iter()
+            .map(|r| r.name)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     // -- selection ---------------------------------------------------------
@@ -542,19 +602,25 @@ impl App {
                         Err(e) => self.status = format!("pull of {tag} failed: {e}"),
                     }
                 }
-                BackgroundEvent::InstalledRefreshed(result) => {
+                BackgroundEvent::Discovered(result) => {
                     self.refreshing = false;
                     match result {
-                        Ok(index) => {
-                            let count = index.len();
-                            self.installed = index;
-                            self.status = match count {
-                                0 => "no local runtime reported any models".to_string(),
-                                1 => "1 installed model found".to_string(),
-                                n => format!("{n} installed models found"),
+                        Ok(discovery) => {
+                            let count = discovery.installed.len();
+                            self.status = match (discovery.runtimes.len(), count) {
+                                (0, _) => "no local runtime is running".to_string(),
+                                (_, 0) => {
+                                    format!("{} running, no models installed", self.runtime_names(&discovery))
+                                }
+                                (_, n) => {
+                                    format!("{} — {n} model(s) installed", self.runtime_names(&discovery))
+                                }
                             };
+                            self.discovery = discovery;
                             self.refilter();
                         }
+                        // Keep whatever was already known; a failed probe is
+                        // not evidence that the models went away.
                         Err(e) => self.status = format!("refresh failed: {e}"),
                     }
                 }
