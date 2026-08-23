@@ -1,3 +1,39 @@
+# Build output.
+#
+# This directory reached 250 MB of compiled artifacts in this repository's
+# history once already. The leading slash anchors it to the repository root;
+# the second line catches a nested crate's target directory too.
 /target
+**/target/
+
+# Rust
 **/*.rs.bk
 *.pdb
+*.orig
+*.rej
+
+# Debug and profiling output
+*.profraw
+perf.data
+perf.data.old
+flamegraph.svg
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.zed/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Local scratch space
+/scratch/
+/tmp/
+*.log
