@@ -160,9 +160,11 @@ MODELS = [
     m("mistralai/Ministral-8B-Instruct-2410", "Ministral 8B", "Mistral AI",
       8.02, 131072, "general", "mrl", "2024-10", ["tools"], 4, True,
       "ministral:8b", layers=36, hidden_size=4096, kv_heads=8, head_dim=128),
+    # `mistral-small:24b` is the 2501 build; the 3.2 refresh already in the
+    # catalog keeps its own tag.
     m("mistralai/Mistral-Small-24B-Instruct-2501", "Mistral Small 3 24B",
       "Mistral AI", 23.6, 32768, "general", "apache-2.0", "2025-01",
-      ["tools"], 4, True, "mistral-small:24b",
+      ["tools"], 4, True, None,
       layers=40, hidden_size=5120, kv_heads=8, head_dim=128),
     m("mistralai/Devstral-Small-2507", "Devstral Small 1.1", "Mistral AI",
       23.6, 131072, "coding", "apache-2.0", "2025-07", ["tools"], 4, True,
