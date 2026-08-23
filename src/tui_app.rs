@@ -217,11 +217,27 @@ impl App {
             cfg_gpu_factor_input: format!("{}", cfg.gpu_factor),
             cfg_cpu_offload_input: format!("{}", cfg.cpu_offload_factor),
             cfg_moe_offload_input: format!("{}", cfg.moe_offload_factor),
-            theme: crate::tui_ui::Theme::Default,
+            theme: crate::tui_ui::Theme::from_index(crate::config::Config::load().theme),
             marked_model_idx: None,
         };
         app.recompute();
         app
+    }
+
+    /// Persist the settings worth carrying into the next session.
+    ///
+    /// Called on quit. A failure here is reported in the status line and
+    /// otherwise ignored — losing a theme preference must never stop the TUI
+    /// from exiting.
+    pub fn save_config(&mut self) {
+        let config = crate::config::Config {
+            theme: self.theme.index(),
+            use_case: self.target,
+            speed: crate::config::PersistedSpeed::from(&self.cfg),
+        };
+        if let Err(e) = config.save() {
+            self.status = format!("could not save settings: {e}");
+        }
     }
 
     /// Re-run the whole fit analysis, e.g. after the use case changes.
@@ -369,7 +385,8 @@ impl App {
         self.download_tag = Some(tag.clone());
         let tx = self.download_tx.clone();
         std::thread::spawn(move || {
-            let result = crate::providers::Ollama::default().pull(&tag);
+            let result =
+                crate::providers::Runtime::new(crate::providers::RuntimeKind::Ollama).pull(&tag);
             let _ = tx.send(DownloadEvent::Done { tag, result });
         });
     }

@@ -13,8 +13,7 @@ use crate::providers::{DiscoveredRuntime, ProviderRegistry, Runtime, RuntimeKind
 ///
 /// Short enough that prompt processing does not dominate, and open-ended
 /// enough that the model will not stop before the token budget is spent.
-const BENCH_PROMPT: &str =
-    "Write a detailed technical explanation of how virtual memory paging works \
+const BENCH_PROMPT: &str = "Write a detailed technical explanation of how virtual memory paging works \
      in a modern operating system. Cover page tables, the TLB, and page faults.";
 
 /// Tokens generated per measured run.

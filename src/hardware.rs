@@ -196,11 +196,49 @@ const GPU_TABLE: &[(&str, f64, f64)] = &[
 /// refuses to make.
 const APPLE_UNIFIED_VRAM_FRACTION: f64 = 0.75;
 
-fn lookup_gpu(name: &str) -> Option<(f64, f64)> {
+/// Reduce a reported GPU name to the form the table fragments are written in.
+///
+/// Vendors decorate the name differently in every source: `nvidia-smi` says
+/// "NVIDIA GeForce RTX 4090", the Windows registry says
+/// "Intel(R) Arc(TM) A770 Graphics", `lspci` adds bracketed codenames. Marks
+/// and punctuation are dropped and runs of whitespace collapsed so that all of
+/// them match the same fragment.
+fn normalize_gpu_name(name: &str) -> String {
     let lower = name.to_ascii_lowercase();
+    let stripped = lower
+        .replace("(r)", " ")
+        .replace("(tm)", " ")
+        .replace(['®', '™'], " ");
+    let mut out = String::with_capacity(stripped.len());
+    for ch in stripped.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if !out.ends_with(' ') {
+            out.push(' ');
+        }
+    }
+    out.trim().to_string()
+}
+
+/// True when `fragment`'s words appear consecutively in `name`.
+///
+/// Matching on whole words rather than raw substrings keeps short fragments
+/// honest: `m4` must not claim a "Tesla M40", and `l4` must not claim an
+/// "L40S".
+fn matches_fragment(name: &str, fragment: &str) -> bool {
+    let words: Vec<&str> = name.split(' ').collect();
+    let wanted: Vec<&str> = fragment.split(' ').collect();
+    if wanted.is_empty() || wanted.len() > words.len() {
+        return false;
+    }
+    words.windows(wanted.len()).any(|window| window == wanted)
+}
+
+fn lookup_gpu(name: &str) -> Option<(f64, f64)> {
+    let normalized = normalize_gpu_name(name);
     GPU_TABLE
         .iter()
-        .find(|(fragment, _, _)| lower.contains(fragment))
+        .find(|(fragment, _, _)| matches_fragment(&normalized, fragment))
         .map(|(_, bandwidth, vram)| (*bandwidth, *vram))
 }
 
@@ -660,6 +698,30 @@ mod tests {
         let (bw, vram) = lookup_gpu("NVIDIA GeForce RTX 4090").unwrap();
         assert_eq!(vram, 24.0);
         assert_eq!(bw, 1008.0);
+    }
+
+    #[test]
+    fn gpu_names_match_through_vendor_decorations() {
+        assert_eq!(
+            normalize_gpu_name("Intel(R) Arc(TM) A770 Graphics"),
+            "intel arc a770 graphics"
+        );
+        assert_eq!(
+            lookup_gpu("Intel(R) Arc(TM) A770 Graphics").unwrap().1,
+            16.0
+        );
+        assert_eq!(lookup_gpu("NVIDIA H100 80GB HBM3").unwrap().1, 80.0);
+        assert_eq!(lookup_gpu("AMD Radeon RX 9070 XT").unwrap().1, 16.0);
+    }
+
+    #[test]
+    fn short_fragments_do_not_match_longer_model_numbers() {
+        // "m4" must not claim a Tesla M40, and "l4" must not claim an L40S.
+        assert_eq!(lookup_gpu("Tesla M40"), None);
+        assert_eq!(lookup_gpu("NVIDIA L40S").unwrap().1, 48.0);
+        assert_eq!(lookup_gpu("NVIDIA L4").unwrap().1, 24.0);
+        assert_eq!(lookup_gpu("Apple M4 Max").unwrap().0, 546.0);
+        assert_eq!(lookup_gpu("Completely Unknown Card"), None);
     }
 
     #[test]

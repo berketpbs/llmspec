@@ -25,6 +25,9 @@ pub fn run(app: &mut App) -> io::Result<()> {
                 }
             }
         }
+        // The theme, use case and speed factors the user settled on are the
+        // starting point for the next session.
+        app.save_config();
         Ok(())
     })
 }

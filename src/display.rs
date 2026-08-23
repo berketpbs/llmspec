@@ -3,9 +3,12 @@
 use colored::{Color, Colorize};
 use serde::Serialize;
 
+use crate::bench::BenchReport;
+use crate::doctor::{Report, Severity};
 use crate::fit::{FitLevel, FitResult, HardwarePlan, RunMode};
 use crate::hardware::Hardware;
 use crate::models::Model;
+use crate::providers::DiscoveredRuntime;
 
 const COL_RANK: usize = 3;
 const COL_NAME: usize = 30;
@@ -351,6 +354,143 @@ fn bar(label: &str, score: f64) -> String {
         format!("{}{}", "#".repeat(filled), "·".repeat(24 - filled)).color(color),
         score
     )
+}
+
+// ---------------------------------------------------------------------------
+// Doctor, runtimes and benchmarks
+// ---------------------------------------------------------------------------
+
+pub fn render_doctor(report: &Report) -> String {
+    let mut out = format!(
+        "{} {} on {} / {}\n\n",
+        "llmspec".bold().underline(),
+        report.version,
+        report.os,
+        report.arch
+    );
+    for check in &report.checks {
+        let color = match check.severity {
+            Severity::Ok => Color::Green,
+            Severity::Warn => Color::Yellow,
+            Severity::Info => Color::Cyan,
+        };
+        out.push_str(&format!(
+            "  {} {} {}\n",
+            pad(check.severity.marker(), 4).color(color),
+            pad(check.name, 14).bold(),
+            check.detail
+        ));
+        if let Some(hint) = &check.hint {
+            out.push_str(&format!("       {:<14} {}\n", "", hint.bright_black()));
+        }
+    }
+    out.push('\n');
+    out.push_str(&match report.warnings() {
+        0 => "  Everything llmspec needs was detected.\n"
+            .green()
+            .to_string(),
+        1 => "  1 item needs attention.\n".yellow().to_string(),
+        n => format!("  {n} items need attention.\n")
+            .yellow()
+            .to_string(),
+    });
+    out
+}
+
+pub fn render_runtimes(found: &[DiscoveredRuntime]) -> String {
+    if found.is_empty() {
+        return format!(
+            "{}\n  {}\n",
+            "No local runtime is responding.".yellow(),
+            "Start one (e.g. `ollama serve`) and try again.".bright_black()
+        );
+    }
+    let mut out = format!("{}\n", "Local runtimes".bold().underline());
+    for runtime in found {
+        let models = match runtime.disk_gb {
+            Some(gb) => format!("{} models, {gb:.1} GB on disk", runtime.model_count),
+            None => format!("{} models", runtime.model_count),
+        };
+        out.push_str(&format!(
+            "  {} {} {}\n",
+            pad(runtime.name, 22).bold(),
+            pad(&runtime.base_url, 30).bright_black(),
+            models,
+        ));
+    }
+    out
+}
+
+pub fn render_bench(report: &BenchReport) -> String {
+    let system = &report.system;
+    let mut out = format!(
+        "{}\n  {} · {} ({:.0} GB VRAM) · {:.0} GB RAM · {}\n\n",
+        "Measured throughput".bold().underline(),
+        system.cpu,
+        system.gpu,
+        system.vram_gb,
+        system.ram_gb,
+        system.backend
+    );
+
+    let header = format!(
+        "{} {} {} {} {} {}",
+        pad("Model", 28),
+        pad("Runtime", 12),
+        rpad("tok/s", 8),
+        rpad("range", 14),
+        rpad("TTFT", 8),
+        rpad("vs est.", 9),
+    );
+    out.push_str(&format!("{}\n", header.bold()));
+    out.push_str(&format!(
+        "{}\n",
+        "-".repeat(header.chars().count()).bright_black()
+    ));
+
+    for r in &report.results {
+        // A ratio far from 1.0 means the bandwidth model mispredicted this
+        // machine, which is the number worth looking at.
+        let ratio = match r.estimate_ratio {
+            Some(ratio) => {
+                let color = if (0.75..=1.35).contains(&ratio) {
+                    Color::Green
+                } else {
+                    Color::Yellow
+                };
+                rpad(&format!("{ratio:.2}x"), 9).color(color).to_string()
+            }
+            None => rpad("-", 9).bright_black().to_string(),
+        };
+        out.push_str(&format!(
+            "{} {} {} {} {} {}\n",
+            pad(&r.model_ref, 28),
+            pad(r.runtime, 12).bright_black(),
+            rpad(&format_tps(r.tokens_per_second), 8).bold(),
+            rpad(
+                &format!("{}-{}", format_tps(r.tps_min), format_tps(r.tps_max)),
+                14
+            )
+            .bright_black(),
+            rpad(
+                &match r.ttft_seconds {
+                    Some(t) => format!("{:.0}ms", t * 1000.0),
+                    None => "-".to_string(),
+                },
+                8
+            ),
+            ratio,
+        ));
+    }
+
+    if report.results.iter().any(|r| r.estimated_tps.is_some()) {
+        out.push_str(&format!(
+            "\n  {}\n",
+            "vs est. is measured / estimated; 1.00x means the model predicted this machine exactly."
+                .bright_black()
+        ));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

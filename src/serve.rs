@@ -48,8 +48,7 @@ impl Server {
     /// Bind and serve until the process is interrupted.
     pub fn listen(&mut self, host: &str, port: u16) -> Result<(), String> {
         let addr = format!("{host}:{port}");
-        let listener =
-            TcpListener::bind(&addr).map_err(|e| format!("cannot bind {addr}: {e}"))?;
+        let listener = TcpListener::bind(&addr).map_err(|e| format!("cannot bind {addr}: {e}"))?;
         let bound = listener
             .local_addr()
             .map(|a| a.to_string())
@@ -138,7 +137,10 @@ impl Server {
                 None => true,
             })
             .filter(|m| match request.get("provider") {
-                Some(p) => m.provider.to_ascii_lowercase().contains(&p.to_ascii_lowercase()),
+                Some(p) => m
+                    .provider
+                    .to_ascii_lowercase()
+                    .contains(&p.to_ascii_lowercase()),
                 None => true,
             })
             .cloned()
@@ -241,7 +243,10 @@ pub struct Request {
 
 impl Request {
     fn get(&self, key: &str) -> Option<&str> {
-        self.query.get(key).map(String::as_str).filter(|v| !v.is_empty())
+        self.query
+            .get(key)
+            .map(String::as_str)
+            .filter(|v| !v.is_empty())
     }
 
     /// A parameter that is true when present, unless explicitly `false`/`0`.
@@ -511,8 +516,9 @@ mod tests {
     #[test]
     fn model_route_returns_one_analysis() {
         let mut server = test_server();
-        let (status, body) =
-            server.route(&parse("GET /models/Qwen%2FQwen2.5-7B-Instruct HTTP/1.1\r\n"));
+        let (status, body) = server.route(&parse(
+            "GET /models/Qwen%2FQwen2.5-7B-Instruct HTTP/1.1\r\n",
+        ));
         assert_eq!(status, 200);
         assert!(body.contains("Qwen2.5 7B"));
     }
@@ -540,7 +546,9 @@ mod tests {
             400
         );
         assert_eq!(
-            server.route(&parse("GET /models?mode=quantum HTTP/1.1\r\n")).0,
+            server
+                .route(&parse("GET /models?mode=quantum HTTP/1.1\r\n"))
+                .0,
             400
         );
         assert_eq!(

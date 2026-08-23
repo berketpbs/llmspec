@@ -13,10 +13,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fmt;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// How long a discovery result stays fresh.
 const DISCOVERY_TTL: u64 = 300;
+
+/// Budget for the "is anything listening" check that precedes every request.
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 
 /// Probes must not stall the TUI when a port is open but unresponsive.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -107,14 +111,19 @@ impl RuntimeKind {
     }
 
     /// Default base URL, overridable per runtime by an environment variable.
+    ///
+    /// The defaults name `127.0.0.1` rather than `localhost` on purpose: on
+    /// Windows `localhost` resolves to `::1` first, and probing a port nothing
+    /// is bound to then waits out the whole connect timeout instead of being
+    /// refused immediately.
     pub fn base_url(self) -> String {
         let (var, default) = match self {
-            RuntimeKind::Ollama => ("OLLAMA_HOST", "http://localhost:11434"),
-            RuntimeKind::LlamaCpp => ("LLAMA_CPP_HOST", "http://localhost:8080"),
-            RuntimeKind::LmStudio => ("LMSTUDIO_HOST", "http://localhost:1234"),
-            RuntimeKind::Vllm => ("VLLM_HOST", "http://localhost:8000"),
-            RuntimeKind::DockerModelRunner => ("DOCKER_MODEL_HOST", "http://localhost:12434"),
-            RuntimeKind::Mlx => ("MLX_HOST", "http://localhost:8080"),
+            RuntimeKind::Ollama => ("OLLAMA_HOST", "http://127.0.0.1:11434"),
+            RuntimeKind::LlamaCpp => ("LLAMA_CPP_HOST", "http://127.0.0.1:8080"),
+            RuntimeKind::LmStudio => ("LMSTUDIO_HOST", "http://127.0.0.1:1234"),
+            RuntimeKind::Vllm => ("VLLM_HOST", "http://127.0.0.1:8000"),
+            RuntimeKind::DockerModelRunner => ("DOCKER_MODEL_HOST", "http://127.0.0.1:12434"),
+            RuntimeKind::Mlx => ("MLX_HOST", "http://127.0.0.1:8080"),
         };
         let raw = env::var(var).unwrap_or_else(|_| default.to_string());
         normalize_url(&raw)
@@ -236,13 +245,34 @@ impl Runtime {
         format!("{}{}", self.base_url, path)
     }
 
-    /// True when the runtime answers its model-listing endpoint.
-    pub fn is_alive(&self) -> bool {
-        self.list_models().is_ok()
+    /// True when something is listening on the runtime's port.
+    ///
+    /// Discovery probes six runtimes, five of which are usually absent. A TCP
+    /// connect answers "nothing there" in microseconds, where an HTTP request
+    /// to a dead port can wait out the full timeout.
+    fn port_is_open(&self) -> bool {
+        let Some(authority) = self
+            .base_url
+            .split_once("://")
+            .map(|(_, rest)| rest.split('/').next().unwrap_or(rest))
+        else {
+            return true;
+        };
+        // A host with no port, or one that needs real DNS, is left to the HTTP
+        // client rather than guessed at here.
+        let Ok(addrs) = authority.to_socket_addrs() else {
+            return true;
+        };
+        addrs
+            .into_iter()
+            .any(|addr| TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).is_ok())
     }
 
     /// Models the runtime has locally.
     pub fn list_models(&self) -> Result<Vec<InstalledModel>, String> {
+        if !self.port_is_open() {
+            return Err(format!("nothing listening at {}", self.base_url));
+        }
         let url = self.url(self.kind.list_path());
         let mut resp = agent(PROBE_TIMEOUT)
             .get(&url)
@@ -279,29 +309,18 @@ impl Runtime {
         }
     }
 
-    /// Remove an installed model.
-    pub fn delete(&self, model_ref: &str) -> Result<(), String> {
-        match self.kind {
-            RuntimeKind::Ollama => {
-                let url = self.url("/api/delete");
-                agent(PROBE_TIMEOUT)
-                    .delete(&url)
-                    .force_send_body()
-                    .send_json(DeleteRequest { name: model_ref })
-                    .map_err(|e| format!("DELETE {url} ({model_ref}): {e}"))?;
-                Ok(())
-            }
-            other => Err(format!("{} has no delete API", other.label())),
-        }
-    }
-
     /// Generate `max_tokens` from `prompt` and report what the run cost.
     ///
     /// Ollama returns its own token counters, which are exact. The
     /// OpenAI-compatible runtimes report a token count in `usage` but no
     /// timing breakdown, so time-to-first-token is only available from a
     /// streaming response and is left unset for them.
-    pub fn generate(&self, model_ref: &str, prompt: &str, max_tokens: u32) -> Result<Sample, String> {
+    pub fn generate(
+        &self,
+        model_ref: &str,
+        prompt: &str,
+        max_tokens: u32,
+    ) -> Result<Sample, String> {
         let url = self.url(self.kind.chat_path());
         let http = agent(GENERATE_TIMEOUT);
         let started = std::time::Instant::now();
@@ -385,11 +404,6 @@ impl Sample {
 struct PullRequest<'a> {
     name: &'a str,
     stream: bool,
-}
-
-#[derive(Serialize)]
-struct DeleteRequest<'a> {
-    name: &'a str,
 }
 
 #[derive(Serialize)]
@@ -565,6 +579,10 @@ pub struct DiscoveredRuntime {
     pub name: &'static str,
     pub base_url: String,
     pub model_count: usize,
+    /// Disk used by the runtime's models, when it reports sizes. The
+    /// OpenAI-compatible listing has no size field, so this stays `None` for
+    /// everything except Ollama.
+    pub disk_gb: Option<f64>,
 }
 
 /// Discovers runtimes and caches what they report.
@@ -602,11 +620,13 @@ impl ProviderRegistry {
                 continue;
             };
             seen_urls.push(endpoint);
+            let disk_gb: f64 = models.iter().map(InstalledModel::size_gb).sum();
             found.push(DiscoveredRuntime {
                 kind,
                 name: kind.label(),
                 base_url: runtime.base_url.clone(),
                 model_count: models.len(),
+                disk_gb: (disk_gb > 0.0).then_some(disk_gb),
             });
             self.cache.insert(kind, (models, now));
         }
@@ -650,23 +670,6 @@ impl ProviderRegistry {
             all.extend(models);
         }
         Ok(all)
-    }
-
-    /// The runtime llmspec should use by default: the first live one in
-    /// preference order, or Ollama when nothing is running.
-    pub fn preferred(&mut self) -> Option<DiscoveredRuntime> {
-        self.discover().into_iter().next()
-    }
-
-    /// True when a runtime reports this exact model reference.
-    pub fn is_installed(&mut self, model_ref: &str) -> Result<bool, String> {
-        let models = self.list_all_models()?;
-        Ok(models.iter().any(|m| m.name == model_ref))
-    }
-
-    /// Pull through Ollama, the only runtime with a download API.
-    pub fn pull_from_ollama(&self, model_ref: &str) -> Result<(), String> {
-        Runtime::new(RuntimeKind::Ollama).pull(model_ref)
     }
 }
 

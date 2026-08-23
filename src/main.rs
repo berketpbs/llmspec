@@ -261,7 +261,7 @@ fn run(cli: Cli) -> Result<(), String> {
             mode,
             limit,
         }) => {
-            let mut results = fit::analyze_all(&db.models, &hw, target, &cfg);
+            let mut results = fit::analyze_all(&catalog_for(&db, runtime), &hw, target, &cfg);
             if let Some(name) = provider {
                 let needle = name.to_ascii_lowercase();
                 results.retain(|r| r.provider.to_ascii_lowercase().contains(&needle));
@@ -286,7 +286,7 @@ fn run(cli: Cli) -> Result<(), String> {
         }
 
         Some(Command::Recommend { limit, table }) => {
-            let mut results = fit::analyze_all(&db.models, &hw, target, &cfg);
+            let mut results = fit::analyze_all(&catalog_for(&db, runtime), &hw, target, &cfg);
             results.retain(FitResult::is_runnable);
             truncate_results(&mut results, Some(*limit));
             // `recommend` defaults to JSON; `--table` opts back into text.
@@ -394,7 +394,7 @@ fn run(cli: Cli) -> Result<(), String> {
 
         None => {
             if cli.cli || cli.json {
-                let results = fit::analyze_all(&db.models, &hw, target, &cfg);
+                let results = fit::analyze_all(&catalog_for(&db, runtime), &hw, target, &cfg);
                 emit_results(&cli, &hw, target, &results);
             } else {
                 let mut app = tui_app::App::new(hw, db, target, cfg);
@@ -412,6 +412,54 @@ fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
     let ram = cli.ram.as_deref().map(parse_size_gb).transpose()?;
     hw.apply_overrides(vram, ram, cli.cpu_cores);
     Ok(hw)
+}
+
+fn resolve_runtime(cli: &Cli) -> Result<Option<RuntimeKind>, String> {
+    match &cli.force_runtime {
+        None => Ok(None),
+        Some(raw) => RuntimeKind::parse(raw).map(Some).ok_or_else(|| {
+            let known = RuntimeKind::ALL
+                .iter()
+                .map(|k| k.slug())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("unknown runtime '{raw}' (try: {known})")
+        }),
+    }
+}
+
+/// The models a runtime can actually load.
+///
+/// GGUF loaders cannot run a model with no GGUF build, so listing one as a
+/// perfect fit would be a lie. Without a forced runtime the whole catalog is
+/// in play and availability is left to the `--runnable` / `a` filters.
+fn catalog_for(db: &ModelDb, runtime: Option<RuntimeKind>) -> Vec<models::Model> {
+    match runtime {
+        Some(kind) if kind.needs_gguf() => db.models.iter().filter(|m| m.gguf).cloned().collect(),
+        _ => db.models.clone(),
+    }
+}
+
+/// Resolve which model references to benchmark.
+fn bench_targets(client: &Runtime, query: &str, all: bool) -> Result<Vec<String>, String> {
+    if !query.is_empty() && !all {
+        return Ok(vec![query.to_string()]);
+    }
+    let installed = client.list_models()?;
+    if installed.is_empty() {
+        return Err(format!(
+            "{} reports no installed models — name one explicitly",
+            client.kind.label()
+        ));
+    }
+    let mut names: Vec<String> = installed.into_iter().map(|m| m.name).collect();
+    if all {
+        return Ok(names);
+    }
+    // No model named and `--all` not given: benchmark the first one, which is
+    // enough to answer "is my machine as fast as llmspec thinks".
+    names.truncate(1);
+    Ok(names)
 }
 
 /// `--max-context`, falling back to `OLLAMA_CONTEXT_LENGTH`.

@@ -29,6 +29,11 @@ pub enum Theme {
     Sunset,
 }
 
+fn themes_wrapping(index: usize) -> Theme {
+    let themes = Theme::all();
+    themes[index % themes.len()]
+}
+
 impl Theme {
     pub fn all() -> &'static [Theme] {
         &[
@@ -46,9 +51,18 @@ impl Theme {
     }
 
     pub fn next(self) -> Theme {
-        let themes = Self::all();
-        let idx = themes.iter().position(|&t| t == self).unwrap_or(0);
-        themes[(idx + 1) % themes.len()]
+        themes_wrapping(self.index() + 1)
+    }
+
+    /// Position in [`Theme::all`]; this is what gets persisted.
+    pub fn index(self) -> usize {
+        Self::all().iter().position(|&t| t == self).unwrap_or(0)
+    }
+
+    /// Theme at `index`, falling back to the default when a stored config
+    /// points past the end of the list.
+    pub fn from_index(index: usize) -> Theme {
+        Self::all().get(index).copied().unwrap_or(Theme::Default)
     }
 
     pub fn name(self) -> &'static str {
