@@ -625,9 +625,27 @@ fn quality_score(model: &Model, quant: Quant, target: UseCase) -> f64 {
     score.clamp(0.0, 100.0)
 }
 
+/// Throughput score.
+///
+/// [`COMFORTABLE_TPS`] — roughly twice reading speed — scores
+/// [`COMFORTABLE_SCORE`] rather than a full 100. Past it the curve keeps
+/// rising, but logarithmically: the difference between 20 and 40 tok/s is felt,
+/// the difference between 80 and 100 is not.
+///
+/// The earlier version clamped at 40 tok/s, which put 43% of the catalog —
+/// and 15 of the top 20 — on exactly 100. A dimension that returns the same
+/// number for most of the field cannot contribute to the ranking, so the
+/// clamp is now a soft knee.
 fn speed_score(tps: f64) -> f64 {
-    let ratio = (tps / SPEED_SCORE_CEILING).clamp(0.0, 1.0);
-    100.0 * ratio.powf(SPEED_SCORE_EXPONENT)
+    if tps <= 0.0 {
+        return 0.0;
+    }
+    if tps <= COMFORTABLE_TPS {
+        COMFORTABLE_SCORE * (tps / COMFORTABLE_TPS).powf(SPEED_SCORE_EXPONENT)
+    } else {
+        let headroom = (tps / COMFORTABLE_TPS).ln() / SPEED_SATURATION.ln();
+        (COMFORTABLE_SCORE + (100.0 - COMFORTABLE_SCORE) * headroom).min(100.0)
+    }
 }
 
 /// Memory-efficiency score. Well under half the pool means the hardware is
@@ -636,14 +654,21 @@ fn speed_score(tps: f64) -> f64 {
 /// because filling VRAM is the point; only genuinely cutting it fine is
 /// penalised. A tighter plateau would quietly favour a smaller quantization
 /// over a better one purely for using less memory.
+/// Headroom score: how much room the placement leaves.
+///
+/// This dimension answers "how tight is this?", not "did you use the card
+/// well". The latter is already carried by quality and context — a model that
+/// fills VRAM with better weights and a longer window scores higher there —
+/// and rewarding memory use twice was what produced the old plateau.
+///
+/// Headroom is real information: a placement at 95% will run out when the
+/// context actually fills or the desktop compositor asks for VRAM back, while
+/// one at 70% will not. [`COMFORTABLE_HEADROOM`] percent free is treated as
+/// all the room anyone needs; below that the score falls away steeply.
 fn fit_score(mem_percent: f64) -> f64 {
-    if mem_percent < 50.0 {
-        30.0 + 70.0 * (mem_percent / 50.0)
-    } else if mem_percent <= 95.0 {
-        100.0
-    } else {
-        (100.0 - (mem_percent - 95.0) * 8.0).max(0.0)
-    }
+    let headroom = (100.0 - mem_percent).max(0.0);
+    let ratio = (headroom / COMFORTABLE_HEADROOM).min(1.0);
+    100.0 * ratio.powf(HEADROOM_EXPONENT)
 }
 
 /// Context capacity score. Sub-target context is penalised on a square-root
