@@ -349,10 +349,12 @@ pub fn sort_by_score(results: &mut [FitResult]) {
 /// Every viable combination is scored and the highest composite wins, rather
 /// than walking a fixed priority order. That keeps one rule instead of three:
 /// the trade-offs between a longer context, a higher quantization and a faster
-/// run mode are already expressed by the four score dimensions and the
-/// use-case weights, so the placement optimises the same objective the ranking
-/// does. A fixed order would, for instance, take Q2_K at full context over
-/// Q4_K_M at half — quality the score model says is not worth the context.
+/// run mode are already expressed by the score dimensions and the use-case
+/// weights. A fixed order would, for instance, take Q2_K at full context over
+/// Q4_K_M at half — a trade the score model says is not worth making.
+///
+/// The objective is [`placement_value`], not the composite: see its
+/// documentation for why headroom is scored but not sought.
 fn place(
     model: &Model,
     hw: &Hardware,
@@ -378,6 +380,7 @@ fn place(
     modes.push(RunMode::Cpu);
 
     let mut best: Option<(Placement, f64, Scores)> = None;
+    let mut best_value = f64::NEG_INFINITY;
     for mode in modes {
         for &context in &contexts {
             for quant in Quant::HIERARCHY {
@@ -385,11 +388,10 @@ fn place(
                     continue;
                 };
                 let tps = estimate_tps(model, hw, quant, mode, placement.gpu_fraction(), cfg);
-                let scores = score(model, &placement, tps, target);
-                let better = best
-                    .as_ref()
-                    .is_none_or(|(_, _, best_scores)| scores.composite > best_scores.composite);
-                if better {
+                let value = placement_value(model, &placement, tps, target);
+                if value > best_value {
+                    best_value = value;
+                    let scores = score(model, &placement, tps, target);
                     best = Some((placement, tps, scores));
                 }
             }
@@ -731,10 +733,7 @@ fn score(model: &Model, placement: &Placement, tps: f64, target: UseCase) -> Sco
         0.0
     } else {
         let weighted = quality * wq + speed * ws + fit * wf + context * wc;
-        // A placement that fits but generates a token every few seconds is not
-        // a usable answer, however good its quality and context scores are.
-        let usability = (tps / MIN_USABLE_TPS).clamp(0.0, 1.0);
-        weighted * usability
+        weighted * usability(tps)
     };
 
     Scores {
@@ -744,6 +743,43 @@ fn score(model: &Model, placement: &Placement, tps: f64, target: UseCase) -> Sco
         context,
         composite,
     }
+}
+
+/// How much of a placement's score survives its throughput.
+///
+/// A placement that fits but produces a token every few seconds is not a
+/// usable answer, however good its quality and context are.
+fn usability(tps: f64) -> f64 {
+    (tps / MIN_USABLE_TPS).clamp(0.0, 1.0)
+}
+
+/// The objective the placement search maximises.
+///
+/// Deliberately **not** the composite. Headroom is a property of the choice
+/// being made, not a goal of it: including it made the search seek
+/// configurations that landed in the headroom curve's sweet spot, which is
+/// circular — the dimension ends up scoring the optimiser rather than the
+/// model. Worse, a headroom term that rewards free memory pushes the search
+/// towards smaller quantizations, trading away real quality to win points for
+/// leaving the card idle.
+///
+/// What a user actually gets from a placement is quality, speed and context,
+/// so those alone decide it. Memory pressure is then reported honestly by
+/// [`fit_score`], and still counts when ranking one model against another.
+fn placement_value(model: &Model, placement: &Placement, tps: f64, target: UseCase) -> f64 {
+    if placement.fit == FitLevel::TooTight {
+        return 0.0;
+    }
+    let quality = quality_score(model, placement.quant, target);
+    let speed = speed_score(tps);
+    let context = context_score(placement.context, target);
+
+    let (wq, ws, _, wc) = weights(target);
+    // Renormalised over the three surviving weights so the balance between
+    // them matches the use case's declared intent.
+    let total = wq + ws + wc;
+    let weighted = (quality * wq + speed * ws + context * wc) / total;
+    weighted * usability(tps)
 }
 
 #[cfg(test)]
