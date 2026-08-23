@@ -10,7 +10,7 @@
 //! an env var somewhere else.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -234,6 +234,104 @@ pub struct InstalledModel {
 impl InstalledModel {
     pub fn size_gb(&self) -> f64 {
         self.size_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+    }
+}
+
+/// Quantization and format markers that appear on a file name but are not
+/// part of the model's identity. Longest first, so `q4_k_m` is stripped whole
+/// rather than leaving a stray `_m`.
+const FORMAT_SUFFIXES: &[&str] = &[
+    "q2-k", "q3-k-s", "q3-k-m", "q3-k-l", "q4-k-s", "q4-k-m", "q5-k-s", "q5-k-m", "q4-0", "q4-1",
+    "q5-0", "q5-1", "q6-k", "q8-0", "iq2-xxs", "iq3-xxs", "iq4-nl", "iq4-xs", "bf16", "fp16",
+    "fp32", "f16", "f32", "gguf", "mlx", "gptq", "awq", "int4", "int8", "2bit", "3bit", "4bit",
+    "5bit", "6bit", "8bit",
+];
+
+/// Reduce a model name to a form comparable across runtimes.
+///
+/// The same weights are called `Qwen/Qwen2.5-7B-Instruct` upstream,
+/// `qwen2.5-7b-instruct` by LM Studio and
+/// `Qwen2.5-7B-Instruct-Q4_K_M.gguf` by llama.cpp. Dropping the publisher
+/// prefix, the file extension and the quantization marker makes those three
+/// the same string.
+fn normalize_model_name(name: &str) -> String {
+    // Everything before the last slash is the publisher, which only one of
+    // the runtimes reports.
+    let tail = name.rsplit('/').next().unwrap_or(name);
+    let lowered = tail.to_ascii_lowercase();
+
+    let mut normalized = String::with_capacity(lowered.len());
+    for ch in lowered.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch);
+        } else if !normalized.ends_with('-') {
+            normalized.push('-');
+        }
+    }
+
+    // Strip trailing format markers repeatedly: `...-instruct-q4-k-m-gguf`
+    // carries two of them.
+    let mut trimmed = normalized.trim_matches('-').to_string();
+    loop {
+        let before = trimmed.len();
+        for suffix in FORMAT_SUFFIXES {
+            if let Some(stem) = trimmed.strip_suffix(suffix)
+                && stem.ends_with('-')
+            {
+                trimmed.truncate(stem.len() - 1);
+                break;
+            }
+        }
+        if trimmed.len() == before {
+            return trimmed;
+        }
+    }
+}
+
+/// The models local runtimes report as already downloaded.
+///
+/// Matching is deliberately conservative. A wrong "already installed" tick
+/// sends the user looking for a file that is not there, while a missed one
+/// only costs them a redundant `ollama pull` that returns immediately.
+#[derive(Debug, Default, Clone)]
+pub struct InstalledIndex {
+    /// Names exactly as the runtimes reported them, lowercased.
+    raw: HashSet<String>,
+    /// The same names reduced by [`normalize_model_name`].
+    normalized: HashSet<String>,
+}
+
+impl InstalledIndex {
+    pub fn from_models(models: Vec<InstalledModel>) -> InstalledIndex {
+        let mut index = InstalledIndex::default();
+        for model in models {
+            index.insert(&model.name);
+        }
+        index
+    }
+
+    pub fn insert(&mut self, name: &str) {
+        self.raw.insert(name.to_ascii_lowercase());
+        self.normalized.insert(normalize_model_name(name));
+    }
+
+    /// Number of distinct models known to be installed.
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+
+    /// True when either the runtime-specific tag or the upstream id is present.
+    pub fn contains(&self, ollama_tag: Option<&str>, model_id: &str) -> bool {
+        if let Some(tag) = ollama_tag
+            && self.raw.contains(&tag.to_ascii_lowercase())
+        {
+            return true;
+        }
+        self.normalized.contains(&normalize_model_name(model_id))
     }
 }
 
@@ -832,6 +930,87 @@ mod tests {
     #[test]
     fn openai_sample_without_usage_is_an_error() {
         assert!(parse_openai_sample(r#"{"choices":[]}"#, 1.0).is_err());
+    }
+
+    #[test]
+    fn normalization_unifies_the_runtimes_spellings_of_one_model() {
+        // Upstream repo id, LM Studio's listing, and a llama.cpp GGUF file
+        // name all describe the same weights.
+        let expected = "qwen2-5-7b-instruct";
+        for spelling in [
+            "Qwen/Qwen2.5-7B-Instruct",
+            "qwen2.5-7b-instruct",
+            "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+            "qwen2.5-7b-instruct-GGUF",
+            "lmstudio-community/Qwen2.5-7B-Instruct-MLX-4bit",
+        ] {
+            assert_eq!(
+                normalize_model_name(spelling),
+                expected,
+                "failed on {spelling}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalization_keeps_distinct_models_distinct() {
+        // The dangerous failure is a false positive: telling the user a model
+        // is on disk when only a relative of it is.
+        assert_ne!(normalize_model_name("phi-4"), normalize_model_name("phi-4-mini"));
+        assert_ne!(
+            normalize_model_name("Qwen/Qwen3-4B"),
+            normalize_model_name("Qwen/Qwen3-8B")
+        );
+        assert_ne!(
+            normalize_model_name("meta-llama/Llama-3.2-1B-Instruct"),
+            normalize_model_name("meta-llama/Llama-3.2-3B-Instruct")
+        );
+    }
+
+    #[test]
+    fn stacked_format_suffixes_are_all_stripped() {
+        assert_eq!(normalize_model_name("Model-Q4_K_M-GGUF"), "model");
+        assert_eq!(normalize_model_name("Model.f16.gguf"), "model");
+        // A suffix that is the whole name is not a model name; leave it be
+        // rather than reducing it to nothing.
+        assert_eq!(normalize_model_name("gguf"), "gguf");
+    }
+
+    #[test]
+    fn the_index_matches_by_tag_and_by_id() {
+        let index = InstalledIndex::from_models(vec![
+            InstalledModel {
+                name: "qwen2.5:7b".into(),
+                provider: "ollama".into(),
+                size_bytes: 0,
+                modified_at: String::new(),
+            },
+            InstalledModel {
+                name: "phi-4-mini-instruct".into(),
+                provider: "lmstudio".into(),
+                size_bytes: 0,
+                modified_at: String::new(),
+            },
+        ]);
+
+        // Ollama is matched on its own tag, exactly.
+        assert!(index.contains(Some("qwen2.5:7b"), "Qwen/Qwen2.5-7B-Instruct"));
+        assert!(index.contains(Some("QWEN2.5:7B"), "irrelevant"));
+        // LM Studio is matched on the normalized upstream id.
+        assert!(index.contains(None, "microsoft/Phi-4-mini-instruct"));
+        // And a different model is not.
+        assert!(!index.contains(Some("phi4:14b"), "microsoft/phi-4"));
+        assert!(!index.contains(None, "Qwen/Qwen3-8B"));
+        assert_eq!(index.len(), 2);
+        assert!(!index.is_empty());
+    }
+
+    #[test]
+    fn an_empty_index_matches_nothing() {
+        let index = InstalledIndex::default();
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+        assert!(!index.contains(Some("anything:7b"), "any/model"));
     }
 
     #[test]
