@@ -11,6 +11,8 @@ mod providers;
 mod serve;
 mod tui_app;
 mod tui_events;
+mod tui_form;
+mod tui_theme;
 mod tui_ui;
 
 use clap::{Parser, Subcommand};

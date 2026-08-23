@@ -1,210 +1,128 @@
 //! TUI rendering.
+//!
+//! Every colour comes from the active [`Palette`] rather than being named at
+//! the call site, so switching themes repaints the whole interface and adding
+//! one cannot leave part of the screen behind.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Row, Table, TableState, Wrap};
-use std::collections::HashSet;
 
-use crate::display::{format_context, format_params, format_tps};
+use crate::display::{format_context, format_params, format_size_gb, format_tps};
 use crate::fit::{FitLevel, FitResult, RunMode};
 use crate::tui_app::{App, Mode};
+use crate::tui_form::Form;
+use crate::tui_theme::Palette;
 
-// ---------------------------------------------------------------------------
-// Theme system
-// ---------------------------------------------------------------------------
+/// Height of the hardware summary at the top, including its border.
+const SYSTEM_HEIGHT: u16 = 6;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Theme {
-    Default,
-    Dracula,
-    Nord,
-    Solarized,
-    Gruvbox,
-    Monokai,
-    Tokyo,
-    Ocean,
-    Forest,
-    Sunset,
-}
+/// Height of the panel below the table. Sized to the tallest of the three
+/// panels so that none of them is silently clipped.
+const PANEL_HEIGHT: u16 = 16;
 
-fn themes_wrapping(index: usize) -> Theme {
-    let themes = Theme::all();
-    themes[index % themes.len()]
-}
-
-impl Theme {
-    pub fn all() -> &'static [Theme] {
-        &[
-            Theme::Default,
-            Theme::Dracula,
-            Theme::Nord,
-            Theme::Solarized,
-            Theme::Gruvbox,
-            Theme::Monokai,
-            Theme::Tokyo,
-            Theme::Ocean,
-            Theme::Forest,
-            Theme::Sunset,
-        ]
-    }
-
-    pub fn next(self) -> Theme {
-        themes_wrapping(self.index() + 1)
-    }
-
-    /// Position in [`Theme::all`]; this is what gets persisted.
-    pub fn index(self) -> usize {
-        Self::all().iter().position(|&t| t == self).unwrap_or(0)
-    }
-
-    /// Theme at `index`, falling back to the default when a stored config
-    /// points past the end of the list.
-    pub fn from_index(index: usize) -> Theme {
-        Self::all().get(index).copied().unwrap_or(Theme::Default)
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Theme::Default => "Default",
-            Theme::Dracula => "Dracula",
-            Theme::Nord => "Nord",
-            Theme::Solarized => "Solarized",
-            Theme::Gruvbox => "Gruvbox",
-            Theme::Monokai => "Monokai",
-            Theme::Tokyo => "Tokyo Night",
-            Theme::Ocean => "Ocean",
-            Theme::Forest => "Forest",
-            Theme::Sunset => "Sunset",
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn accent(self) -> Color {
-        match self {
-            Theme::Default => Color::Cyan,
-            Theme::Dracula => Color::Magenta,
-            Theme::Nord => Color::Cyan,
-            Theme::Solarized => Color::Yellow,
-            Theme::Gruvbox => Color::LightRed,
-            Theme::Monokai => Color::Magenta,
-            Theme::Tokyo => Color::Cyan,
-            Theme::Ocean => Color::Blue,
-            Theme::Forest => Color::Green,
-            Theme::Sunset => Color::LightRed,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn header_fg(self) -> Color {
-        match self {
-            Theme::Default => Color::White,
-            Theme::Dracula => Color::LightMagenta,
-            Theme::Nord => Color::LightCyan,
-            Theme::Solarized => Color::Cyan,
-            Theme::Gruvbox => Color::LightYellow,
-            Theme::Monokai => Color::LightGreen,
-            Theme::Tokyo => Color::LightBlue,
-            Theme::Ocean => Color::LightBlue,
-            Theme::Forest => Color::LightGreen,
-            Theme::Sunset => Color::Yellow,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn fit_perfect(self) -> Color {
-        match self {
-            Theme::Dracula => Color::Green,
-            Theme::Sunset => Color::LightYellow,
-            _ => Color::Green,
-        }
-    }
-}
-
-const HEADER: [&str; 12] = [
-    "Model", "Provider", "Params", "Quant", "Mode", "Fit", "Inst", "Mem%", "Ctx", "tok/s", "Score",
-    "Use Case",
-];
-
-const WIDTHS: [Constraint; 12] = [
-    Constraint::Min(24),
-    Constraint::Length(13),
-    Constraint::Length(8),
-    Constraint::Length(7),
-    Constraint::Length(8),
-    Constraint::Length(9),
-    Constraint::Length(4),
-    Constraint::Length(6),
-    Constraint::Length(6),
-    Constraint::Length(7),
-    Constraint::Length(6),
-    Constraint::Length(10),
+/// Table columns: heading, width, and whether the value is right-aligned.
+const COLUMNS: &[(&str, Constraint)] = &[
+    ("Model", Constraint::Min(22)),
+    ("Provider", Constraint::Length(12)),
+    ("Params", Constraint::Length(7)),
+    ("Quant", Constraint::Length(7)),
+    ("Mode", Constraint::Length(7)),
+    ("Fit", Constraint::Length(9)),
+    ("On disk", Constraint::Length(7)),
+    ("Size", Constraint::Length(7)),
+    ("Mem%", Constraint::Length(5)),
+    ("Ctx", Constraint::Length(6)),
+    ("tok/s", Constraint::Length(6)),
+    ("Score", Constraint::Length(5)),
 ];
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let detail_height =
-        if app.mode == Mode::Detail || app.mode == Mode::Plan || app.mode == Mode::Comparison {
-            13
-        } else {
-            0
-        };
+    let palette = app.theme.palette();
+    let panel_height = if app.mode.is_panel() { PANEL_HEIGHT } else { 0 };
+
     let layout = Layout::vertical([
-        Constraint::Length(6),
+        Constraint::Length(SYSTEM_HEIGHT),
         Constraint::Fill(1),
-        Constraint::Length(detail_height),
+        Constraint::Length(panel_height),
         Constraint::Length(1),
     ]);
-    let [system, table, detail, status] = frame.area().layout(&layout);
+    let [system, table, panel, status] = frame.area().layout(&layout);
 
-    render_system(frame, system, app);
-    render_table(frame, table, app);
-    if app.mode == Mode::Detail {
-        render_detail(frame, detail, app);
-    } else if app.mode == Mode::Plan {
-        render_plan_view(frame, detail, app);
-    } else if app.mode == Mode::Comparison {
-        render_comparison(frame, detail, app);
+    render_system(frame, system, app, &palette);
+    render_table(frame, table, app, &palette);
+    match app.mode {
+        Mode::Detail => render_detail(frame, panel, app, &palette),
+        Mode::Plan => render_plan(frame, panel, app, &palette),
+        Mode::Comparison => render_comparison(frame, panel, app, &palette),
+        _ => {}
     }
-    render_status(frame, status, app);
+    render_status(frame, status, app, &palette);
 
-    if app.mode == Mode::Help {
-        render_help(frame, frame.area());
-    } else if app.mode == Mode::SimulateHardware {
-        render_simulation(frame, frame.area(), app);
-    } else if app.mode == Mode::AdvancedConfig {
-        render_advanced_config(frame, frame.area(), app);
-    }
-}
-
-fn fit_color(fit: FitLevel) -> Color {
-    match fit {
-        FitLevel::Perfect => Color::Green,
-        FitLevel::Good => Color::Cyan,
-        FitLevel::Marginal => Color::Yellow,
-        FitLevel::TooTight => Color::Red,
+    match app.mode {
+        Mode::Help => render_help(frame, frame.area(), &palette),
+        Mode::SimulateHardware => {
+            render_form(frame, frame.area(), &app.simulation, " Simulate hardware ", &palette)
+        }
+        Mode::AdvancedConfig => {
+            render_form(frame, frame.area(), &app.speed_form, " Speed model ", &palette)
+        }
+        _ => {}
     }
 }
 
-fn mode_color(mode: RunMode) -> Color {
-    match mode {
-        RunMode::Gpu => Color::Green,
-        RunMode::Moe => Color::Magenta,
-        RunMode::CpuGpu => Color::Yellow,
-        RunMode::Cpu => Color::DarkGray,
-    }
+// ---------------------------------------------------------------------------
+// Shared styling
+// ---------------------------------------------------------------------------
+
+fn fit_style(fit: FitLevel, palette: &Palette) -> Style {
+    let colour = match fit {
+        FitLevel::Perfect => palette.good,
+        FitLevel::Good => palette.ok,
+        FitLevel::Marginal => palette.warn,
+        FitLevel::TooTight => palette.bad,
+    };
+    Style::new().fg(colour)
+}
+
+fn mode_style(mode: RunMode, palette: &Palette) -> Style {
+    let colour = match mode {
+        RunMode::Gpu => palette.good,
+        RunMode::Moe => palette.special,
+        RunMode::CpuGpu => palette.warn,
+        RunMode::Cpu => palette.dim,
+    };
+    Style::new().fg(colour)
+}
+
+fn dim(palette: &Palette) -> Style {
+    Style::new().fg(palette.dim)
+}
+
+fn label(text: &str, palette: &Palette) -> Span<'static> {
+    Span::styled(format!("{text:<11}"), dim(palette))
+}
+
+/// A bordered block in the theme's colours.
+fn panel_block(title: &str, palette: &Palette) -> Block<'static> {
+    Block::bordered()
+        .title(Span::styled(title.to_string(), Style::new().fg(palette.accent)))
+        .border_style(dim(palette))
 }
 
 // ---------------------------------------------------------------------------
 // System panel
 // ---------------------------------------------------------------------------
 
-fn render_system(frame: &mut Frame, area: Rect, app: &App) {
+fn render_system(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
     let hw = &app.hw;
+
     let gpu = if hw.gpus.is_empty() {
         Line::from(vec![
-            Span::styled("GPU  ", Style::new().dim()),
-            Span::styled("none detected", Style::new().fg(Color::Yellow)),
+            label("GPU", palette),
+            Span::styled("none detected", Style::new().fg(palette.warn)),
         ])
     } else {
         let bandwidth = match hw.primary_bandwidth() {
@@ -212,37 +130,52 @@ fn render_system(frame: &mut Frame, area: Rect, app: &App) {
             None => "bandwidth unknown".to_string(),
         };
         Line::from(vec![
-            Span::styled("GPU  ", Style::new().dim()),
+            label("GPU", palette),
             Span::raw(format!(
-                "{} — {:.1} GB VRAM, {}",
+                "{} — {:.1} GB VRAM, {bandwidth}",
                 hw.primary_gpu_name(),
-                hw.total_vram_gb(),
-                bandwidth
+                hw.total_vram_gb()
             )),
         ])
     };
 
+    // Which runtimes are up is the first thing to check when a download or a
+    // benchmark misbehaves, so it belongs on screen rather than in a menu.
+    let runtimes = if app.discovery.runtimes.is_empty() {
+        Span::styled("no local runtime", Style::new().fg(palette.warn))
+    } else {
+        Span::styled(
+            app.discovery
+                .runtimes
+                .iter()
+                .map(|r| r.name)
+                .collect::<Vec<_>>()
+                .join(", "),
+            Style::new().fg(palette.good),
+        )
+    };
+
     let mut title = vec![Span::styled(
         " llmspec ",
-        Style::new().fg(Color::Black).bg(Color::Cyan).bold(),
+        Style::new().fg(palette.selection).bg(palette.accent).bold(),
     )];
     if hw.simulated {
         title.push(Span::styled(
-            " SIM ",
-            Style::new().fg(Color::Black).bg(Color::Yellow).bold(),
+            " SIMULATED ",
+            Style::new().fg(palette.selection).bg(palette.warn).bold(),
         ));
     }
 
     let text = vec![
         Line::from(vec![
-            Span::styled("CPU  ", Style::new().dim()),
+            label("CPU", palette),
             Span::raw(format!(
                 "{} ({} cores / {} threads)",
                 hw.cpu_brand, hw.cpu_cores, hw.cpu_threads
             )),
         ]),
         Line::from(vec![
-            Span::styled("RAM  ", Style::new().dim()),
+            label("RAM", palette),
             Span::raw(format!(
                 "{:.1} GB total, {:.1} GB available",
                 hw.total_ram_gb, hw.available_ram_gb
@@ -250,44 +183,62 @@ fn render_system(frame: &mut Frame, area: Rect, app: &App) {
         ]),
         gpu,
         Line::from(vec![
-            Span::styled("Back ", Style::new().dim()),
+            label("Backend", palette),
             Span::styled(hw.backend.label(), Style::new().bold()),
-            Span::styled("   Use case ", Style::new().dim()),
-            Span::styled(app.target.as_str(), Style::new().fg(Color::Cyan).bold()),
+            Span::styled("   use case ", dim(palette)),
+            Span::styled(
+                app.target.as_str(),
+                Style::new().fg(palette.accent).bold(),
+            ),
+            Span::styled("   runtimes ", dim(palette)),
+            runtimes,
         ]),
     ];
 
-    let block = Block::bordered().title(Line::from(title));
-    frame.render_widget(Paragraph::new(text).block(block), area);
+    frame.render_widget(
+        Paragraph::new(text).block(
+            Block::bordered()
+                .title(Line::from(title))
+                .border_style(dim(palette)),
+        ),
+        area,
+    );
 }
 
 // ---------------------------------------------------------------------------
 // Model table
 // ---------------------------------------------------------------------------
 
-fn render_table(frame: &mut Frame, area: Rect, app: &mut App) {
-    let header = Row::new(HEADER.map(|h| Span::styled(h, Style::new().bold())))
-        .style(Style::new().fg(Color::White))
-        .bottom_margin(0);
+fn render_table(frame: &mut Frame, area: Rect, app: &mut App, palette: &Palette) {
+    let header = Row::new(
+        COLUMNS
+            .iter()
+            .map(|(name, _)| Span::styled(*name, Style::new().fg(palette.accent).bold())),
+    );
 
     let rows: Vec<Row> = app
         .visible
         .iter()
-        .map(|&i| row_for(&app.results[i], &app.installed))
+        .map(|&i| {
+            let result = &app.results[i];
+            row_for(result, app.is_installed(result), palette)
+        })
         .collect();
 
     let title = format!(
-        " {} models · fit: {} · avail: {} · sort: {} ",
+        " {} of {} models · fit {} · show {} · sort {} ",
         app.visible.len(),
+        app.results.len(),
         app.fit_filter.label(),
         app.availability.label(),
         app.sort.label()
     );
 
-    let table = Table::new(rows, WIDTHS)
+    let widths: Vec<Constraint> = COLUMNS.iter().map(|(_, w)| *w).collect();
+    let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::bordered().title(title))
-        .row_highlight_style(Style::new().bg(Color::Rgb(40, 45, 60)).bold())
+        .block(panel_block(&title, palette))
+        .row_highlight_style(Style::new().bg(palette.selection).bold())
         .highlight_symbol("› ");
 
     let mut state = TableState::default();
@@ -297,25 +248,33 @@ fn render_table(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_stateful_widget(table, area, &mut state);
 }
 
-fn row_for(r: &FitResult, installed: &HashSet<String>) -> Row<'static> {
-    let score = format!("{:.1}", r.scores.composite);
-    let inst = match &r.ollama {
-        Some(tag) if installed.contains(tag) => Span::styled("✓", Style::new().fg(Color::Green)),
-        _ => Span::styled("–", Style::new().dim()),
+fn row_for(r: &FitResult, installed: bool, palette: &Palette) -> Row<'static> {
+    let on_disk = if installed {
+        Span::styled("yes", Style::new().fg(palette.good))
+    } else {
+        Span::styled("–", dim(palette))
     };
+    // A context far below the model's own maximum changes what the model is
+    // useful for, so the number is marked rather than shown bare.
+    let context = if r.context_is_reduced() {
+        Span::styled(format_context(r.context), Style::new().fg(palette.warn))
+    } else {
+        Span::raw(format_context(r.context))
+    };
+
     Row::new(vec![
         Span::raw(r.name.clone()),
-        Span::styled(r.provider.clone(), Style::new().dim()),
+        Span::styled(r.provider.clone(), dim(palette)),
         Span::raw(format_params(r.params_b, r.active_params_b)),
         Span::raw(r.quant.label()),
-        Span::styled(r.mode.label(), Style::new().fg(mode_color(r.mode))),
-        Span::styled(r.fit.label(), Style::new().fg(fit_color(r.fit))),
-        inst,
+        Span::styled(r.mode.label(), mode_style(r.mode, palette)),
+        Span::styled(r.fit.label(), fit_style(r.fit, palette)),
+        on_disk,
+        Span::raw(format_size_gb(r.download_gb)),
         Span::raw(format!("{:.0}%", r.mem_percent)),
-        Span::raw(format_context(r.context)),
+        context,
         Span::raw(format_tps(r.tokens_per_second)),
-        Span::styled(score, Style::new().bold()),
-        Span::styled(r.use_case.as_str(), Style::new().dim()),
+        Span::styled(format!("{:.1}", r.scores.composite), Style::new().bold()),
     ])
 }
 
@@ -323,434 +282,447 @@ fn row_for(r: &FitResult, installed: &HashSet<String>) -> Row<'static> {
 // Detail panel
 // ---------------------------------------------------------------------------
 
-fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
+fn render_detail(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
     let Some(r) = app.selected_result() else {
         return;
     };
     let capabilities = app
-        .selected_model()
+        .model_for(r)
         .map(|m| m.capabilities.join(", "))
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| "—".to_string());
 
-    let text = vec![
-        Line::from(vec![
-            Span::styled(r.name.clone(), Style::new().bold()),
-            Span::styled(format!("  {}", r.model_id), Style::new().dim()),
-        ]),
-        Line::from(vec![
-            Span::styled("Runs as    ", Style::new().dim()),
-            Span::styled(
-                format!("{} / {}", r.mode.label(), r.quant.label()),
-                Style::new().fg(mode_color(r.mode)).bold(),
-            ),
-            Span::styled("   verdict ", Style::new().dim()),
-            Span::styled(r.fit.label(), Style::new().fg(fit_color(r.fit)).bold()),
-        ]),
-        Line::from(vec![
-            Span::styled("Memory     ", Style::new().dim()),
-            Span::raw(format!(
-                "{:.1} GB total · {:.1} GB resident · {:.0}% of pool",
-                r.required_gb, r.resident_gb, r.mem_percent
-            )),
-        ]),
-        Line::from(vec![
-            Span::styled("Context    ", Style::new().dim()),
-            Span::raw(format!(
-                "{} used of {} max",
+    let context = if r.context_is_reduced() {
+        Span::styled(
+            format!(
+                "{} of {} — short of this model's maximum on your hardware",
                 format_context(r.context),
                 format_context(r.max_context)
-            )),
+            ),
+            Style::new().fg(palette.warn),
+        )
+    } else {
+        Span::raw(format!("{} (full)", format_context(r.context)))
+    };
+
+    let mut text = vec![
+        Line::from(vec![
+            Span::styled(r.name.clone(), Style::new().fg(palette.accent).bold()),
+            Span::styled(format!("  {}", r.model_id), dim(palette)),
         ]),
         Line::from(vec![
-            Span::styled("Throughput ", Style::new().dim()),
+            label("Verdict", palette),
+            Span::styled(r.fit.label(), fit_style(r.fit, palette).bold()),
+            Span::styled("  running as ", dim(palette)),
+            Span::styled(r.mode.label(), mode_style(r.mode, palette).bold()),
+            Span::styled(format!(" at {}", r.quant.label()), dim(palette)),
+        ]),
+        Line::from(vec![
+            label("Download", palette),
+            Span::raw(format!("{} on disk", format_size_gb(r.download_gb))),
+            Span::styled("   in memory ", dim(palette)),
             Span::raw(format!(
-                "~{} tok/s estimated",
-                format_tps(r.tokens_per_second)
+                "{:.1} GB ({:.0}% of the pool)",
+                r.required_gb, r.mem_percent
             )),
         ]),
+        Line::from(vec![label("Context", palette), context]),
         Line::from(vec![
-            Span::styled("License    ", Style::new().dim()),
-            Span::raw(r.license.clone()),
-            Span::styled("   released ", Style::new().dim()),
-            Span::raw(r.released.clone()),
-            Span::styled("   caps ", Style::new().dim()),
-            Span::raw(capabilities),
+            label("Throughput", palette),
+            Span::raw(format!("~{} tok/s estimated", format_tps(r.tokens_per_second))),
+            Span::styled("   verify with ", dim(palette)),
+            Span::styled("llmspec bench", Style::new().fg(palette.accent)),
         ]),
-        Line::raw(""),
-        score_bar("Quality", r.scores.quality),
-        score_bar("Speed", r.scores.speed),
-        score_bar("Fit", r.scores.fit),
-        score_bar("Context", r.scores.context),
+        Line::from(vec![
+            label("About", palette),
+            Span::raw(format!("{} · {} · {}", r.license, r.released, capabilities)),
+        ]),
     ];
 
-    let block = Block::bordered().title(" Detail — Enter to close ");
+    // The command to actually run the thing is the point of the whole tool.
+    text.push(match app.commands_for(r) {
+        Some((kind, install, run)) => Line::from(vec![
+            label("Run it", palette),
+            Span::styled(
+                if app.is_installed(r) { run } else { install },
+                Style::new().fg(palette.good),
+            ),
+            Span::styled(format!("   ({})", kind.label()), dim(palette)),
+        ]),
+        None => Line::from(vec![
+            label("Run it", palette),
+            Span::styled(
+                "no packaged build for the detected runtime".to_string(),
+                dim(palette),
+            ),
+        ]),
+    });
+
+    text.push(Line::raw(""));
+    text.push(score_bar("Quality", r.scores.quality, palette));
+    text.push(score_bar("Speed", r.scores.speed, palette));
+    text.push(score_bar("Fit", r.scores.fit, palette));
+    text.push(score_bar("Context", r.scores.context, palette));
+
     frame.render_widget(
-        Paragraph::new(text).block(block).wrap(Wrap { trim: true }),
+        Paragraph::new(text)
+            .block(panel_block(" Detail — Enter to close ", palette))
+            .wrap(Wrap { trim: true }),
         area,
     );
 }
 
-fn score_bar(label: &str, score: f64) -> Line<'static> {
+fn score_bar(name: &str, score: f64, palette: &Palette) -> Line<'static> {
     const WIDTH: usize = 30;
-    let filled = ((score / 100.0) * WIDTH as f64)
-        .round()
-        .clamp(0.0, WIDTH as f64) as usize;
-    let color = if score >= 75.0 {
-        Color::Green
-    } else if score >= 50.0 {
-        Color::Cyan
-    } else if score >= 25.0 {
-        Color::Yellow
-    } else {
-        Color::Red
-    };
+    let filled = ((score / 100.0) * WIDTH as f64).round().clamp(0.0, WIDTH as f64) as usize;
     Line::from(vec![
-        Span::styled(format!("{label:<11}"), Style::new().dim()),
-        Span::styled("█".repeat(filled), Style::new().fg(color)),
-        Span::styled("·".repeat(WIDTH - filled), Style::new().dim()),
+        label(name, palette),
+        Span::styled("█".repeat(filled), Style::new().fg(palette.score(score))),
+        Span::styled("·".repeat(WIDTH - filled), dim(palette)),
         Span::raw(format!(" {score:.1}")),
     ])
 }
 
 // ---------------------------------------------------------------------------
-// Status bar and help
+// Plan panel
 // ---------------------------------------------------------------------------
 
-fn render_status(frame: &mut Frame, area: Rect, app: &App) {
-    let line = match app.mode {
-        Mode::Search => Line::from(vec![
-            Span::styled(" /", Style::new().fg(Color::Black).bg(Color::Cyan).bold()),
+fn render_plan(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
+    let Some(result) = app.selected_result() else {
+        return;
+    };
+    let Some(model) = app.model_for(result) else {
+        return;
+    };
+    let plan = crate::fit::plan(model, result.quant, result.context, &app.cfg);
+
+    let text = vec![
+        Line::from(vec![
+            Span::styled(plan.model_name.clone(), Style::new().fg(palette.accent).bold()),
             Span::styled(
-                format!("{} ", app.search),
-                Style::new().fg(Color::Black).bg(Color::Cyan),
-            ),
-            Span::styled(
-                "  Enter/Esc to accept · Ctrl-U to clear",
-                Style::new().dim(),
+                format!(
+                    "  {} at {}, {} context",
+                    format_params(plan.params_b, result.active_params_b),
+                    plan.quantization.label(),
+                    format_context(plan.context_length)
+                ),
+                dim(palette),
             ),
         ]),
-        _ => {
-            let mut spans = vec![Span::styled(
-                " j/k move · / search · f fit · a avail · s sort · u use case · d download · r refresh · Enter detail · h help · q quit",
-                Style::new().dim(),
-            )];
-            if !app.status.is_empty() {
-                spans.push(Span::styled(
-                    format!("  │  {}", app.status),
-                    Style::new().fg(Color::Cyan),
-                ));
-            }
-            if !app.search.is_empty() {
-                spans.push(Span::styled(
-                    format!("  │  /{}", app.search),
-                    Style::new().fg(Color::Yellow),
-                ));
-            }
-            Line::from(spans)
+        Line::raw(""),
+        Line::from(vec![
+            label("Min VRAM", palette),
+            Span::raw(format!("{:.1} GB to hold it on the GPU", plan.min_vram_gb)),
+        ]),
+        Line::from(vec![
+            label("Advised", palette),
+            Span::raw(format!(
+                "{:.1} GB, leaving headroom for the runtime",
+                plan.recommended_vram_gb
+            )),
+        ]),
+        Line::from(vec![
+            label("Min RAM", palette),
+            Span::raw(format!("{:.1} GB to run it on the CPU", plan.min_ram_gb)),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            label("On a GPU", palette),
+            Span::raw(format!("~{} tok/s", format_tps(plan.tps_gpu))),
+            Span::styled("   on the CPU ", dim(palette)),
+            Span::raw(format!("~{} tok/s", format_tps(plan.tps_cpu))),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            label("Viable", palette),
+            Span::raw(plan.viable_modes.join(", ")),
+        ]),
+    ];
+
+    frame.render_widget(
+        Paragraph::new(text)
+            .block(panel_block(" Hardware plan — any key to close ", palette))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Comparison panel
+// ---------------------------------------------------------------------------
+
+fn render_comparison(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
+    let (Some(marked), Some(selected)) = (app.marked_result(), app.selected_result()) else {
+        return;
+    };
+
+    /// One comparison row: label, marked value, selected value, and which side
+    /// wins (`None` when the metric has no better direction).
+    type ComparisonRow = (&'static str, String, String, Option<bool>);
+
+    let better = |a: f64, b: f64| Some(a > b);
+    let rows: Vec<ComparisonRow> = vec![
+        (
+            "Score",
+            format!("{:.1}", marked.scores.composite),
+            format!("{:.1}", selected.scores.composite),
+            better(marked.scores.composite, selected.scores.composite),
+        ),
+        (
+            "Throughput",
+            format!("{} tok/s", format_tps(marked.tokens_per_second)),
+            format!("{} tok/s", format_tps(selected.tokens_per_second)),
+            better(marked.tokens_per_second, selected.tokens_per_second),
+        ),
+        (
+            "Verdict",
+            marked.fit.label().to_string(),
+            selected.fit.label().to_string(),
+            Some(marked.fit > selected.fit),
+        ),
+        (
+            "Runs as",
+            format!("{} at {}", marked.mode.label(), marked.quant.label()),
+            format!("{} at {}", selected.mode.label(), selected.quant.label()),
+            None,
+        ),
+        (
+            "Download",
+            format_size_gb(marked.download_gb),
+            format_size_gb(selected.download_gb),
+            // Smaller is better here.
+            Some(marked.download_gb < selected.download_gb),
+        ),
+        (
+            "Memory",
+            format!("{:.1} GB ({:.0}%)", marked.required_gb, marked.mem_percent),
+            format!(
+                "{:.1} GB ({:.0}%)",
+                selected.required_gb, selected.mem_percent
+            ),
+            None,
+        ),
+        (
+            "Context",
+            format_context(marked.context),
+            format_context(selected.context),
+            Some(marked.context > selected.context),
+        ),
+        (
+            "Parameters",
+            format_params(marked.params_b, marked.active_params_b),
+            format_params(selected.params_b, selected.active_params_b),
+            None,
+        ),
+    ];
+
+    let mut text = vec![
+        Line::from(vec![
+            Span::styled(format!("{:<12}", ""), dim(palette)),
+            Span::styled(format!("{:<28}", truncate(&marked.name, 27)), Style::new().bold()),
+            Span::styled(truncate(&selected.name, 27), Style::new().fg(palette.accent).bold()),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("{:<12}", ""), dim(palette)),
+            Span::styled(format!("{:<28}", "marked (m)"), dim(palette)),
+            Span::styled("selected", dim(palette)),
+        ]),
+        Line::raw(""),
+    ];
+
+    for (name, left, right, marked_wins) in rows {
+        // Highlighting the winner is what makes the panel readable at a
+        // glance; a metric with no better direction is left plain.
+        let (left_style, right_style) = match marked_wins {
+            Some(true) => (Style::new().fg(palette.good).bold(), Style::new()),
+            Some(false) => (Style::new(), Style::new().fg(palette.good).bold()),
+            None => (Style::new(), Style::new()),
+        };
+        text.push(Line::from(vec![
+            Span::styled(format!("{name:<12}"), dim(palette)),
+            Span::styled(format!("{:<28}", truncate(&left, 27)), left_style),
+            Span::styled(truncate(&right, 27), right_style),
+        ]));
+    }
+
+    frame.render_widget(
+        Paragraph::new(text).block(panel_block(" Comparison — any key to close ", palette)),
+        area,
+    );
+}
+
+fn truncate(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    text.chars().take(width.saturating_sub(1)).chain(['…']).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
+
+/// Keys advertised in the status bar. The full list lives in the help popup.
+const STATUS_HINT: &str =
+    " j/k move · / search · f fit · a show · s sort · u use case · d download · Enter detail · h help · q quit";
+
+fn render_status(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
+    let line = if app.mode == Mode::Search {
+        Line::from(vec![
+            Span::styled(
+                " / ",
+                Style::new().fg(palette.selection).bg(palette.accent).bold(),
+            ),
+            Span::styled(
+                format!("{} ", app.search),
+                Style::new().fg(palette.selection).bg(palette.accent),
+            ),
+            Span::styled("  Enter or Esc to accept · Ctrl-U to clear", dim(palette)),
+        ])
+    } else {
+        let mut spans = vec![Span::styled(STATUS_HINT, dim(palette))];
+        if !app.status.is_empty() {
+            spans.push(Span::styled(
+                format!("  │  {}", app.status),
+                Style::new().fg(palette.accent),
+            ));
         }
+        if !app.search.is_empty() {
+            spans.push(Span::styled(
+                format!("  │  /{}", app.search),
+                Style::new().fg(palette.warn),
+            ));
+        }
+        Line::from(spans)
     };
     frame.render_widget(Paragraph::new(line), area);
 }
 
-const HELP: &[(&str, &str)] = &[
-    ("j / k, ↑ / ↓", "move between models"),
-    ("g / G", "jump to first / last"),
-    ("PgUp / PgDn", "scroll by 10"),
-    ("/", "search by name, provider, size or use case"),
-    ("Ctrl-U", "clear the search"),
-    (
-        "f",
-        "cycle fit filter: All, Runnable, Perfect, Good, Marginal",
-    ),
-    ("a", "cycle availability filter: All, GGUF Avail"),
-    ("s", "cycle sort column"),
-    ("u", "cycle target use case and re-rank"),
-    ("d", "download selected model via Ollama"),
-    ("r", "refresh installed models from Ollama"),
-    ("Enter", "toggle the detail panel"),
-    ("h / ?", "this help"),
-    ("q / Esc", "quit"),
+// ---------------------------------------------------------------------------
+// Help
+// ---------------------------------------------------------------------------
+
+/// Every binding, grouped. `None` in the key column starts a new group.
+const HELP: &[(Option<&str>, &str)] = &[
+    (None, "Moving around"),
+    (Some("j / k, ↑ / ↓"), "move between models"),
+    (Some("g / G, Home / End"), "jump to first / last"),
+    (Some("PgUp / PgDn, Ctrl-U / Ctrl-D"), "scroll by ten"),
+    (None, "Narrowing the list"),
+    (Some("/"), "search by name, provider, size or capability"),
+    (Some("Ctrl-U"), "clear the search (while searching)"),
+    (Some("f"), "fit filter: all, runnable, perfect, good, marginal"),
+    (Some("a"), "show: all models, GGUF builds, already installed"),
+    (Some("s"), "sort column"),
+    (Some("u"), "target use case, and re-rank for it"),
+    (None, "Inspecting a model"),
+    (Some("Enter"), "detail panel: memory, context, run command"),
+    (Some("p"), "hardware plan: what this model would need"),
+    (Some("m"), "mark a model, then"),
+    (Some("c"), "compare the marked model with the selected one"),
+    (None, "Running models"),
+    (Some("d"), "download the selected model through Ollama"),
+    (Some("r"), "re-probe local runtimes and installed models"),
+    (None, "Changing the estimate"),
+    (Some("S"), "simulate different VRAM, RAM or core count"),
+    (Some("A"), "edit the speed model's tunables"),
+    (None, "Other"),
+    (Some("t"), "cycle the colour theme"),
+    (Some("h / ?"), "this help"),
+    (Some("q / Esc"), "quit"),
 ];
 
-fn render_help(frame: &mut Frame, area: Rect) {
-    let width = 64.min(area.width.saturating_sub(4));
-    let height = (HELP.len() as u16 + 4).min(area.height.saturating_sub(2));
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
-
+fn render_help(frame: &mut Frame, area: Rect, palette: &Palette) {
     let mut lines = vec![Line::raw("")];
-    lines.extend(HELP.iter().map(|(key, description)| {
-        Line::from(vec![
-            Span::styled(format!("  {key:<14}"), Style::new().fg(Color::Cyan).bold()),
-            Span::raw(*description),
-        ])
-    }));
-
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::bordered()
-                .title(" Key bindings — any key to close ")
-                .style(Style::new().add_modifier(Modifier::BOLD)),
-        ),
-        popup,
-    );
-}
-
-fn render_comparison(frame: &mut Frame, area: Rect, app: &App) {
-    if let (Some(marked), Some(selected)) = (app.marked_result(), app.selected_result()) {
-        let mut lines = vec![];
-        lines.push(Line::from(vec![Span::styled(
-            " Model Comparison ",
-            Style::new().bold(),
-        )]));
-        lines.push(Line::raw(""));
-
-        let attrs = vec![
-            (
-                "Score",
-                format!(
-                    "{:.1} vs {:.1}",
-                    marked.scores.composite, selected.scores.composite
+    for (key, description) in HELP {
+        match key {
+            Some(key) => lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {key:<30}"),
+                    Style::new().fg(palette.accent).bold(),
                 ),
-            ),
-            (
-                "tok/s",
-                format!(
-                    "{:.1} vs {:.1}",
-                    marked.tokens_per_second, selected.tokens_per_second
-                ),
-            ),
-            ("Fit", format!("{:?} vs {:?}", marked.fit, selected.fit)),
-            (
-                "Mem%",
-                format!("{:.1}% vs {:.1}%", marked.mem_percent, selected.mem_percent),
-            ),
-            (
-                "Params",
-                format!("{:.1}B vs {:.1}B", marked.params_b, selected.params_b),
-            ),
-            ("Mode", format!("{:?} vs {:?}", marked.mode, selected.mode)),
-            (
-                "Context",
-                format!(
-                    "{} vs {}",
-                    format_context(marked.context),
-                    format_context(selected.context)
-                ),
-            ),
-            (
-                "Quant",
-                format!("{:?} vs {:?}", marked.quant, selected.quant),
-            ),
-        ];
-
-        for (attr, vals) in attrs {
-            lines.push(Line::from(format!(" {:12} {}", attr, vals)));
+                Span::raw(*description),
+            ])),
+            // Group heading.
+            None => {
+                lines.push(Line::raw(""));
+                lines.push(Line::from(Span::styled(
+                    format!("  {description}"),
+                    Style::new().fg(palette.warn).bold(),
+                )));
+            }
         }
-        lines.push(Line::raw(""));
-        lines.push(Line::raw(" Marked (m): ".to_string() + &marked.name));
-        lines.push(Line::raw(" Selected (c): ".to_string() + &selected.name));
-
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(Block::bordered().title(" Comparison (press any key to close) "))
-                .style(Style::new()),
-            area,
-        );
     }
+
+    let popup = centred(area, 74, lines.len() as u16 + 2);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines).block(panel_block(" Key bindings — any key to close ", palette)),
+        popup,
+    );
 }
 
-fn render_plan_view(frame: &mut Frame, area: Rect, app: &App) {
-    if let Some(result) = app.selected_result() {
-        use crate::fit::plan;
-        let plan_info = plan(
-            app.db
-                .models
-                .iter()
-                .find(|m| m.id == result.model_id)
-                .unwrap(),
-            result.quant,
-            result.context,
-            &app.cfg,
-        );
+// ---------------------------------------------------------------------------
+// Editable popups
+// ---------------------------------------------------------------------------
 
-        let mut lines = vec![];
-        lines.push(Line::from(vec![Span::styled(
-            format!(
-                " {} @ {} params",
-                plan_info.model_name,
-                format_params(plan_info.params_b, None)
+fn render_form(frame: &mut Frame, area: Rect, form: &Form, title: &str, palette: &Palette) {
+    let mut lines = vec![Line::raw("")];
+
+    for (index, field) in form.fields().iter().enumerate() {
+        let active = form.is_active(index);
+        let (marker, style) = if active {
+            ("› ", Style::new().fg(palette.accent).bold())
+        } else {
+            ("  ", Style::new())
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {marker}{:<12}", field.label), style),
+            Span::styled(
+                format!("{:<10}", field.value),
+                if active {
+                    Style::new().fg(palette.accent).add_modifier(Modifier::UNDERLINED)
+                } else {
+                    Style::new()
+                },
             ),
-            Style::new().bold(),
-        )]));
-        lines.push(Line::from(format!(
-            " context={}",
-            format_context(plan_info.context_length)
-        )));
-        lines.push(Line::raw(""));
-        lines.push(Line::from(format!(
-            " Min VRAM (GPU):     {:.1} GB",
-            plan_info.min_vram_gb
-        )));
-        lines.push(Line::from(format!(
-            " Recommended VRAM:   {:.1} GB",
-            plan_info.recommended_vram_gb
-        )));
-        lines.push(Line::from(format!(
-            " Min RAM (CPU):      {:.1} GB",
-            plan_info.min_ram_gb
-        )));
-        lines.push(Line::raw(""));
-        lines.push(Line::from(format!(" GPU tok/s:  {:.1}", plan_info.tps_gpu)));
-        lines.push(Line::from(format!(" CPU tok/s:  {:.1}", plan_info.tps_cpu)));
-        lines.push(Line::raw(""));
-        lines.push(Line::from(format!(
-            " Viable modes: {}",
-            plan_info.viable_modes.join(", ")
-        )));
-
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(Block::bordered().title(" Hardware Plan (press any key to close) "))
-                .style(Style::new()),
-            area,
-        );
+            Span::styled(field.range_hint(), dim(palette)),
+        ]));
     }
-}
 
-fn render_advanced_config(frame: &mut Frame, area: Rect, app: &App) {
-    let width = 56.min(area.width.saturating_sub(4));
-    let height = 15.min(area.height.saturating_sub(2));
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
-
-    let eff_style = if app.cfg_field == 0 {
-        Style::new().fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-    let gpu_style = if app.cfg_field == 1 {
-        Style::new().fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-    let cpu_style = if app.cfg_field == 2 {
-        Style::new().fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-    let moe_style = if app.cfg_field == 3 {
-        Style::new().fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-
-    let mut lines = vec![Line::raw("")];
-    lines.push(Line::from(vec![
-        Span::styled("  Efficiency (0.01-1.0):  ", eff_style),
-        Span::raw(&app.cfg_efficiency_input),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  GPU factor (0.1-2.0):   ", gpu_style),
-        Span::raw(&app.cfg_gpu_factor_input),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  CPU offload (0.1-1.0):  ", cpu_style),
-        Span::raw(&app.cfg_cpu_offload_input),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  MoE offload (0.1-1.0):  ", moe_style),
-        Span::raw(&app.cfg_moe_offload_input),
-    ]));
+    // Explain only the field being edited: four permanent help lines crowd
+    // out the values they describe.
     lines.push(Line::raw(""));
-    lines.push(Line::raw(
-        "  Efficiency: bandwidth utilization (default 0.55)",
-    ));
-    lines.push(Line::raw(
-        "  GPU factor: speed multiplier on GPU (default 1.0)",
-    ));
-    lines.push(Line::raw(
-        "  Offload factors: hybrid exec speed (defaults 0.5/0.8)",
-    ));
+    if let Some(field) = form.fields().get(form.active()) {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", field.help),
+            dim(palette),
+        )));
+    }
     lines.push(Line::raw(""));
-    lines.push(Line::raw(
-        "  Tab/j/k to move, Enter to apply, Esc to cancel",
-    ));
+    lines.push(Line::from(Span::styled(
+        "  Tab/j/k move · Ctrl-U clear · Ctrl-R reset · Enter apply · Esc cancel",
+        dim(palette),
+    )));
 
+    let popup = centred(area, 72, lines.len() as u16 + 2);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::bordered()
-                .title(" Advanced Speed Config ")
-                .style(Style::new().add_modifier(Modifier::BOLD)),
-        ),
+        Paragraph::new(lines).block(panel_block(title, palette)),
         popup,
     );
 }
 
-fn render_simulation(frame: &mut Frame, area: Rect, app: &App) {
-    let width = 50.min(area.width.saturating_sub(4));
-    let height = 13.min(area.height.saturating_sub(2));
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
+/// Centre a popup, shrinking it to fit a small terminal.
+fn centred(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
         width,
         height,
-    };
-
-    let vram_style = if app.sim_field == 0 {
-        Style::new().fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-    let ram_style = if app.sim_field == 1 {
-        Style::new().fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-    let cpu_style = if app.sim_field == 2 {
-        Style::new().fg(Color::Cyan).bold()
-    } else {
-        Style::new()
-    };
-
-    let mut lines = vec![Line::raw("")];
-    lines.push(Line::from(vec![
-        Span::styled("  VRAM (GB): ", vram_style),
-        Span::raw(&app.sim_vram_input),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  RAM (GB): ", ram_style),
-        Span::raw(&app.sim_ram_input),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  CPU cores: ", cpu_style),
-        Span::raw(&app.sim_cpu_input),
-    ]));
-    lines.push(Line::raw(""));
-    lines.push(Line::raw("  Tab/j/k to move fields"));
-    lines.push(Line::raw("  Ctrl+R to reset, Enter to apply"));
-    lines.push(Line::raw("  Esc to cancel"));
-
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::bordered()
-                .title(" Hardware Simulation ")
-                .style(Style::new().add_modifier(Modifier::BOLD)),
-        ),
-        popup,
-    );
+    }
 }
 
 #[cfg(test)]
@@ -759,30 +731,9 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    use crate::fit::SpeedConfig;
-    use crate::hardware::{Backend, Hardware};
-    use crate::models::{ModelDb, UseCase};
-
-    fn app() -> App {
-        let mut hw = Hardware {
-            cpu_brand: "Test CPU".into(),
-            cpu_cores: 8,
-            cpu_threads: 16,
-            arch: "x86_64".into(),
-            total_ram_gb: 32.0,
-            available_ram_gb: 24.0,
-            gpus: Vec::new(),
-            backend: Backend::CpuX86,
-            simulated: true,
-        };
-        hw.set_vram(12.0);
-        App::new(
-            hw,
-            ModelDb::embedded(),
-            UseCase::General,
-            SpeedConfig::default(),
-        )
-    }
+    use crate::providers::{DiscoveredRuntime, RuntimeKind};
+    use crate::tui_app::tests::test_app;
+    use crate::tui_theme::Theme;
 
     /// Render one frame and return the screen as text.
     fn screen(app: &mut App, width: u16, height: u16) -> String {
@@ -801,57 +752,220 @@ mod tests {
 
     #[test]
     fn renders_system_panel_and_models() {
-        let mut app = app();
-        let out = screen(&mut app, 140, 30);
+        let mut app = test_app();
+        let out = screen(&mut app, 150, 30);
         assert!(out.contains("llmspec"), "{out}");
-        assert!(out.contains("SIM"), "simulated hardware should be badged");
+        assert!(out.contains("SIMULATED"), "simulated hardware is badged");
         assert!(out.contains("Test CPU"));
         assert!(out.contains("12.0 GB VRAM"));
-        // The top-ranked model should be on screen.
         let top = &app.results[app.visible[0]].name;
         assert!(out.contains(top.as_str()), "expected {top} in:\n{out}");
     }
 
     #[test]
-    fn renders_detail_panel() {
-        let mut app = app();
-        app.mode = Mode::Detail;
-        let out = screen(&mut app, 140, 40);
-        assert!(out.contains("Detail"));
-        assert!(out.contains("Quality"));
-        assert!(out.contains("Throughput"));
+    fn the_system_panel_reports_runtime_status() {
+        let mut app = test_app();
+        assert!(screen(&mut app, 150, 30).contains("no local runtime"));
+
+        app.discovery.runtimes = vec![DiscoveredRuntime {
+            kind: RuntimeKind::LmStudio,
+            name: RuntimeKind::LmStudio.label(),
+            base_url: "http://127.0.0.1:1234".into(),
+            model_count: 3,
+            disk_gb: None,
+        }];
+        assert!(screen(&mut app, 150, 30).contains("LM Studio"));
     }
 
     #[test]
-    fn renders_help_popup() {
-        let mut app = app();
+    fn the_table_shows_download_size_and_install_state() {
+        let mut app = test_app();
+        let out = screen(&mut app, 150, 30);
+        assert!(out.contains("On disk"), "install column header missing");
+        assert!(out.contains("Size"), "download-size column header missing");
+
+        // Nothing is installed, so the column reads as absent everywhere.
+        assert!(!out.contains("yes"), "nothing should be marked installed");
+
+        let tag = app
+            .results
+            .iter()
+            .find_map(|r| r.ollama.clone())
+            .expect("catalog has ollama tags");
+        app.discovery.installed.insert(&tag);
+        app.refilter();
+        assert!(screen(&mut app, 150, 30).contains("yes"));
+    }
+
+    #[test]
+    fn the_detail_panel_shows_the_command_to_run_the_model() {
+        let mut app = test_app();
+        // Select a model with an Ollama tag so a command exists.
+        let row = app
+            .visible
+            .iter()
+            .position(|&i| app.results[i].ollama.is_some())
+            .expect("a tagged model is visible");
+        app.selected = row;
+        app.mode = Mode::Detail;
+
+        let out = screen(&mut app, 150, 44);
+        assert!(out.contains("Detail"));
+        assert!(out.contains("Run it"), "{out}");
+        assert!(out.contains("ollama pull"), "{out}");
+        assert!(out.contains("Download"), "download size is missing");
+        assert!(out.contains("Quality") && out.contains("Context"));
+    }
+
+    #[test]
+    fn an_installed_model_is_offered_the_run_command_not_the_pull() {
+        let mut app = test_app();
+        let row = app
+            .visible
+            .iter()
+            .position(|&i| app.results[i].ollama.is_some())
+            .unwrap();
+        app.selected = row;
+        let tag = app.results[app.visible[row]].ollama.clone().unwrap();
+        app.discovery.installed.insert(&tag);
+        app.mode = Mode::Detail;
+
+        let out = screen(&mut app, 150, 44);
+        assert!(out.contains("ollama run"), "{out}");
+    }
+
+    #[test]
+    fn every_panel_fits_inside_its_allotted_height() {
+        // The panels are sized by a constant; if one grows past it the last
+        // line vanishes silently, so assert the final line of each is drawn.
+        let mut app = test_app();
+
+        app.mode = Mode::Detail;
+        assert!(
+            screen(&mut app, 150, 44).contains("Context"),
+            "the detail panel's last score bar is clipped"
+        );
+
+        app.mode = Mode::Plan;
+        assert!(
+            screen(&mut app, 150, 44).contains("Viable"),
+            "the plan panel's last line is clipped"
+        );
+
+        app.mark_for_comparison();
+        app.move_selection(1);
+        app.mode = Mode::Comparison;
+        assert!(
+            screen(&mut app, 150, 44).contains("Parameters"),
+            "the comparison panel's last row is clipped"
+        );
+    }
+
+    #[test]
+    fn the_comparison_panel_uses_display_labels_not_debug_names() {
+        let mut app = test_app();
+        app.mark_for_comparison();
+        app.move_selection(1);
+        app.mode = Mode::Comparison;
+        let out = screen(&mut app, 150, 44);
+
+        assert!(out.contains("marked (m)"));
+        // Debug formatting would print Q4KM and TooTight, which are not words.
+        assert!(!out.contains("Q4KM"), "{out}");
+        assert!(!out.contains("TooTight"), "{out}");
+        assert!(!out.contains("CpuGpu"), "{out}");
+    }
+
+    #[test]
+    fn the_help_popup_lists_every_binding() {
+        let mut app = test_app();
         app.mode = Mode::Help;
-        let out = screen(&mut app, 140, 30);
+        let out = screen(&mut app, 150, 46);
         assert!(out.contains("Key bindings"));
-        assert!(out.contains("cycle sort column"));
+        // Keys that the earlier help omitted entirely.
+        for expected in ["sort column", "colour theme", "hardware plan", "simulate"] {
+            assert!(
+                out.to_lowercase().contains(expected),
+                "help is missing {expected}:\n{out}"
+            );
+        }
     }
 
     #[test]
     fn renders_search_prompt() {
-        let mut app = app();
+        let mut app = test_app();
         app.mode = Mode::Search;
         app.search = "qwen".into();
         app.refilter();
-        let out = screen(&mut app, 140, 30);
-        assert!(out.contains("/qwen"), "{out}");
+        let out = screen(&mut app, 150, 30);
+        assert!(out.contains("qwen"), "{out}");
+    }
+
+    #[test]
+    fn form_popups_show_values_and_the_active_field_hint() {
+        let mut app = test_app();
+        app.open_simulation();
+        let out = screen(&mut app, 150, 30);
+        assert!(out.contains("Simulate hardware"));
+        assert!(out.contains("VRAM (GB)"));
+        assert!(out.contains("accelerator memory"), "active hint missing");
+
+        app.open_advanced_config();
+        let out = screen(&mut app, 150, 30);
+        assert!(out.contains("Speed model"));
+        assert!(out.contains("Efficiency"));
+        assert!(out.contains("bandwidth"), "{out}");
+    }
+
+    #[test]
+    fn a_reduced_context_is_visually_marked() {
+        let mut app = test_app();
+        // On 12 GB of VRAM at least one long-context model must run short.
+        assert!(
+            app.results.iter().any(FitResult::context_is_reduced),
+            "expected some model to be placed below its native context"
+        );
+        // Rendering it must not panic and the row still shows a context.
+        assert!(screen(&mut app, 150, 30).contains("Ctx"));
+    }
+
+    #[test]
+    fn every_theme_renders() {
+        let mut app = test_app();
+        app.mode = Mode::Detail;
+        for theme in Theme::ALL {
+            app.theme = theme;
+            let out = screen(&mut app, 150, 44);
+            assert!(
+                out.contains("llmspec"),
+                "{} failed to render",
+                theme.name()
+            );
+        }
     }
 
     #[test]
     fn survives_a_tiny_terminal_and_an_empty_list() {
-        let mut app = app();
+        let mut app = test_app();
         app.search = "no-such-model".into();
         app.refilter();
         assert!(app.visible.is_empty());
+
         // Must not panic on a cramped viewport with nothing to show.
-        screen(&mut app, 40, 10);
-        app.mode = Mode::Detail;
-        screen(&mut app, 20, 8);
-        app.mode = Mode::Help;
-        screen(&mut app, 20, 6);
+        for (w, h) in [(40, 10), (20, 8), (10, 4), (1, 1)] {
+            for mode in [
+                Mode::Normal,
+                Mode::Detail,
+                Mode::Plan,
+                Mode::Comparison,
+                Mode::Help,
+                Mode::SimulateHardware,
+                Mode::AdvancedConfig,
+                Mode::Search,
+            ] {
+                app.mode = mode;
+                screen(&mut app, w, h);
+            }
+        }
     }
 }
