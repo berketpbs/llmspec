@@ -273,6 +273,9 @@ fn run(cli: Cli) -> Result<(), String> {
             provider,
             quant,
             mode,
+            min_tps,
+            max_size,
+            min_context,
             limit,
         }) => {
             let mut results = fit::analyze_all(&catalog_for(&db, runtime), &hw, target, &cfg);
@@ -290,6 +293,18 @@ fn run(cli: Cli) -> Result<(), String> {
                     format!("unknown run mode '{raw}' (try: gpu, moe, cpu+gpu, cpu)")
                 })?;
                 results.retain(|r| r.mode == wanted);
+            }
+            // Practical thresholds: how fast it has to be, how much disk it
+            // may take, and how much context it has to hold.
+            if let Some(floor) = min_tps {
+                results.retain(|r| r.tokens_per_second >= *floor);
+            }
+            if let Some(raw) = max_size {
+                let ceiling = parse_size_gb(raw)?;
+                results.retain(|r| r.download_gb <= ceiling);
+            }
+            if let Some(floor) = min_context {
+                results.retain(|r| r.context >= *floor);
             }
             let floor = resolve_min_fit(*perfect, *runnable, min_fit.as_deref())?;
             if let Some(floor) = floor {
