@@ -609,6 +609,25 @@ pub fn render_bench(report: &BenchReport) -> String {
                 .bright_black()
         ));
     }
+
+    // Offer the one-line fix rather than leaving the user to work out which
+    // knob reconciles the two numbers.
+    if let Some(efficiency) = report.suggested_efficiency
+        && report
+            .results
+            .iter()
+            .any(|r| r.estimate_ratio.is_some_and(|ratio| !(0.9..=1.1).contains(&ratio)))
+    {
+        out.push_str(&format!(
+            "\n  {} {}\n",
+            "To match these measurements, set the efficiency factor to".bright_black(),
+            format!("{efficiency:.2}").bold()
+        ));
+        out.push_str(&format!(
+            "  {}\n",
+            "(press A in the TUI; the value is saved for next time)".bright_black()
+        ));
+    }
     out
 }
 

@@ -321,6 +321,63 @@ mod tests {
     }
 
     #[test]
+    fn calibration_scales_the_efficiency_by_the_median_ratio() {
+        // Two runs twice as fast as predicted mean the efficiency factor was
+        // half what this machine actually achieves.
+        let mut fast = summarize("a", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
+        attach_estimate(&mut fast, &analysis(25.0), 4.6);
+        let report = BenchReport::new(
+            HardwareSummary {
+                cpu: "test".into(),
+                gpu: "test".into(),
+                vram_gb: 24.0,
+                ram_gb: 64.0,
+                backend: "CUDA",
+            },
+            vec![fast],
+            0.4,
+        );
+        assert!((report.suggested_efficiency.unwrap() - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn calibration_never_exceeds_full_bandwidth() {
+        // Efficiency is a fraction of peak, so no measurement can push it
+        // past 1.0 however fast the run was.
+        let mut fast = summarize("a", RuntimeKind::Ollama, &[sample(1000, 1.0, None)]);
+        attach_estimate(&mut fast, &analysis(10.0), 4.6);
+        let report = BenchReport::new(
+            HardwareSummary {
+                cpu: "test".into(),
+                gpu: "test".into(),
+                vram_gb: 24.0,
+                ram_gb: 64.0,
+                backend: "CUDA",
+            },
+            vec![fast],
+            0.55,
+        );
+        assert_eq!(report.suggested_efficiency, Some(1.0));
+    }
+
+    #[test]
+    fn calibration_is_skipped_without_anything_to_compare() {
+        let plain = summarize("a", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
+        let report = BenchReport::new(
+            HardwareSummary {
+                cpu: "test".into(),
+                gpu: "test".into(),
+                vram_gb: 0.0,
+                ram_gb: 16.0,
+                backend: "CPU (x86)",
+            },
+            vec![plain],
+            0.55,
+        );
+        assert!(report.suggested_efficiency.is_none());
+    }
+
+    #[test]
     fn zero_duration_does_not_divide_by_zero() {
         let result = summarize("test", RuntimeKind::Ollama, &[sample(100, 0.0, None)]);
         assert_eq!(result.tokens_per_second, 0.0);
