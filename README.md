@@ -63,12 +63,12 @@ System
   Backend    CUDA
 
 $ llmspec fit -n 5
-#   Model                   Provider      Params Quant   Mode   Fit       Mem%  Ctx  tok/s Score
-1   Qwen2.5 7B Instruct     Alibaba Qwen    7.6B Q4_K_M  GPU    Perfect    83%  32K   34.9  76.8
-2   Qwen3 30B A3B           Alibaba Qwen  30B/3B Q3_K_M  MoE    Good       62%  32K   79.7  75.3
-3   Qwen2.5-VL 7B Instruct  Alibaba Qwen    8.3B Q4_K_M  GPU    Good       88%  32K   32.1  73.6
-4   DeepSeek R1 Distill 7B  DeepSeek        7.6B Q4_K_M  GPU    Perfect    83%  32K   34.9  74.0
-5   Mistral 7B Instruct     Mistral AI      7.3B Q4_K_M  GPU    Perfect    79%  32K   36.3  72.1
+#   Model                        Provider      Params Quant   Mode  Fit       Mem%  Ctx  tok/s Score
+1   Qwen3 30B A3B Instruct 2507  Alibaba Qwen  30B/3B Q3_K_M  MoE   Good       62%  32K   79.7  77.3
+2   GPT-OSS 20B                  OpenAI         21B/4B Q6_K   MoE   Good       79%  64K   43.5  77.2
+3   Qwen2.5 7B Instruct          Alibaba Qwen    7.6B Q4_K_M  GPU   Perfect    83%  32K   34.9  76.8
+4   Qwen3 30B A3B                Alibaba Qwen  30B/3B Q3_K_M  MoE   Good       62%  32K   79.7  75.3
+5   GLM-4 9B Chat                Zhipu AI        9.4B Q3_K_M  GPU   Marginal   92%  32K   35.0  75.2
 ```
 
 ---
