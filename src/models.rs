@@ -404,6 +404,82 @@ impl ModelDb {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Benchmark-based quality scores
+// ---------------------------------------------------------------------------
+
+/// The benchmark database is embedded at build time.
+const EMBEDDED_BENCHMARKS: &str = include_str!("../data/benchmarks.json");
+
+#[derive(Debug, Clone, Deserialize)]
+struct BenchmarkFamily {
+    #[serde(rename = "match")]
+    patterns: Vec<String>,
+    scores: std::collections::HashMap<String, f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BenchmarkFile {
+    #[allow(dead_code)]
+    #[serde(default)]
+    _comment: String,
+    families: Vec<BenchmarkFamily>,
+}
+
+/// Per-family benchmark scores aggregated from public leaderboards
+/// (HumanEval, GPQA, MMLU-Pro, arena-style preference).
+///
+/// Matches are resolved by longest matching substring of the lowercased
+/// model id, so `"qwen2.5-coder"` beats `"qwen2.5"` for
+/// `Qwen/Qwen2.5-Coder-7B-Instruct`.
+#[derive(Debug, Clone)]
+pub struct BenchmarkDb {
+    families: Vec<BenchmarkFamily>,
+}
+
+impl BenchmarkDb {
+    /// Load the benchmark database embedded at build time.
+    pub fn embedded() -> BenchmarkDb {
+        let file: BenchmarkFile =
+            serde_json::from_str(EMBEDDED_BENCHMARKS).expect("embedded benchmarks is valid JSON");
+        BenchmarkDb {
+            families: file.families,
+        }
+    }
+
+    /// Look up the benchmark score for a model id and use case.
+    ///
+    /// Returns `Some(0.0..100.0)` when a matching family entry exists,
+    /// `None` otherwise — callers fall back to the size+tier heuristic.
+    pub fn lookup(&self, model_id: &str, target: UseCase) -> Option<f64> {
+        let id_lower = model_id.to_ascii_lowercase();
+        let key = match target {
+            UseCase::Coding => "coding",
+            UseCase::Reasoning => "reasoning",
+            UseCase::Chat | UseCase::General => "chat",
+            UseCase::Multimodal => "chat",
+            UseCase::Embedding => return None,
+        };
+
+        // Longest matching pattern wins, so a specific family like
+        // "qwen2.5-coder" beats the broader "qwen2.5".
+        let mut best: Option<(usize, f64)> = None;
+        for family in &self.families {
+            for pattern in &family.patterns {
+                if id_lower.contains(pattern) {
+                    let len = pattern.len();
+                    if best.map_or(true, |(prev_len, _)| len > prev_len) {
+                        if let Some(&score) = family.scores.get(key) {
+                            best = Some((len, score));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|(_, score)| score)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
