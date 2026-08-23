@@ -761,7 +761,10 @@ impl ProviderRegistry {
     /// Reuses whatever [`ProviderRegistry::discover`] already fetched, so the
     /// common "discover then list" pairing costs one probe rather than two.
     /// A caller that wants fresh data builds a new registry.
-    pub fn list_all_models(&mut self) -> Result<Vec<InstalledModel>, String> {
+    ///
+    /// A runtime that is not running is not an error, so this cannot fail —
+    /// it returns an empty list when nothing answers.
+    pub fn list_all_models(&mut self) -> Vec<InstalledModel> {
         let now = now_secs();
         let mut all = Vec::new();
         for kind in RuntimeKind::ALL {
@@ -781,7 +784,7 @@ impl ProviderRegistry {
             };
             all.extend(models);
         }
-        Ok(all)
+        all
     }
 }
 

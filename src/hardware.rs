@@ -520,7 +520,7 @@ fn detect_amd() -> Vec<Gpu> {
                 f.to_ascii_lowercase().contains("radeon")
                     || f.to_ascii_lowercase().contains("instinct")
             })
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .unwrap_or_else(|| "AMD GPU".to_string());
         // VRAM is reported in bytes by `--showmeminfo vram`.
         let vram_gb = fields

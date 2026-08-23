@@ -192,7 +192,7 @@ fn handle_normal_key(app: &mut App, key: KeyEvent) {
                 Mode::Detail
             };
         }
-        KeyCode::Char('h') | KeyCode::Char('?') => app.mode = Mode::Help,
+        KeyCode::Char('h' | '?') => app.mode = Mode::Help,
         _ => {}
     }
 }

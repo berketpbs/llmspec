@@ -25,7 +25,7 @@ pub enum BackgroundEvent {
         result: Result<(), String>,
     },
     /// Local runtimes were probed and their models listed.
-    Discovered(Result<Discovery, String>),
+    Discovered(Discovery),
 }
 
 /// What one pass of runtime discovery found.
@@ -331,11 +331,13 @@ impl App {
         thread::spawn(move || {
             let mut registry = ProviderRegistry::new();
             let runtimes = registry.discover();
-            let result = registry.list_all_models().map(|models| Discovery {
-                installed: InstalledIndex::from_models(models),
+            let installed = InstalledIndex::from_models(registry.list_all_models());
+            // Probing cannot fail — a runtime that is not running simply does
+            // not appear — so there is no error case to report.
+            let _ = tx.send(BackgroundEvent::Discovered(Discovery {
+                installed,
                 runtimes,
-            });
-            let _ = tx.send(BackgroundEvent::Discovered(result));
+            }));
         });
     }
 
@@ -444,21 +446,10 @@ impl App {
         }
     }
 
-    /// The name that runtime knows this model by.
-    pub fn model_reference(&self, result: &FitResult, kind: RuntimeKind) -> Option<String> {
-        if kind.uses_own_registry() {
-            // A registry-backed runtime cannot be handed an upstream repo id;
-            // without a tag there is no command worth printing.
-            result.ollama.clone()
-        } else {
-            Some(result.model_id.clone())
-        }
-    }
-
     /// Install and run commands for the selected model, when they exist.
     pub fn commands_for(&self, result: &FitResult) -> Option<(RuntimeKind, String, String)> {
         let kind = self.suggested_runtime(result);
-        let reference = self.model_reference(result, kind)?;
+        let reference = crate::display::model_reference(result, kind)?;
         Some((
             kind,
             kind.install_command(&reference),
@@ -604,33 +595,23 @@ impl App {
                         Err(e) => self.status = format!("pull of {tag} failed: {e}"),
                     }
                 }
-                BackgroundEvent::Discovered(result) => {
+                BackgroundEvent::Discovered(discovery) => {
                     self.refreshing = false;
-                    match result {
-                        Ok(discovery) => {
-                            let count = discovery.installed.len();
-                            self.status = match (discovery.runtimes.len(), count) {
-                                (0, _) => "no local runtime is running".to_string(),
-                                (_, 0) => {
-                                    format!(
-                                        "{} running, no models installed",
-                                        Self::runtime_names(&discovery)
-                                    )
-                                }
-                                (_, n) => {
-                                    format!(
-                                        "{} — {n} model(s) installed",
-                                        Self::runtime_names(&discovery)
-                                    )
-                                }
-                            };
-                            self.discovery = discovery;
-                            self.refilter();
+                    self.status = match (discovery.runtimes.len(), discovery.installed.len()) {
+                        (0, _) => "no local runtime is running".to_string(),
+                        (_, 0) => format!(
+                            "{} running, no models installed",
+                            Self::runtime_names(&discovery)
+                        ),
+                        (_, 1) => {
+                            format!("{} — 1 model installed", Self::runtime_names(&discovery))
                         }
-                        // Keep whatever was already known; a failed probe is
-                        // not evidence that the models went away.
-                        Err(e) => self.status = format!("refresh failed: {e}"),
-                    }
+                        (_, n) => {
+                            format!("{} — {n} models installed", Self::runtime_names(&discovery))
+                        }
+                    };
+                    self.discovery = discovery;
+                    self.refilter();
                 }
             }
         }
@@ -808,7 +789,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::hardware::Backend;
 
-    pub(crate) fn test_hardware(vram: f64, ram: f64) -> Hardware {
+    pub fn test_hardware(vram: f64, ram: f64) -> Hardware {
         let mut hw = Hardware {
             cpu_brand: "Test CPU".into(),
             cpu_cores: 8,
@@ -828,7 +809,7 @@ pub(crate) mod tests {
 
     /// An app that has never touched the network: `start_discovery` is not
     /// called, so `installed` stays empty and every test is deterministic.
-    pub(crate) fn test_app() -> App {
+    pub fn test_app() -> App {
         App::new(
             test_hardware(12.0, 32.0),
             ModelDb::embedded(),
@@ -1193,7 +1174,7 @@ pub(crate) mod tests {
         installed.insert("qwen2.5:7b");
         installed.insert("phi-4");
         app.events_tx
-            .send(BackgroundEvent::Discovered(Ok(Discovery {
+            .send(BackgroundEvent::Discovered(Discovery {
                 installed,
                 runtimes: vec![DiscoveredRuntime {
                     kind: RuntimeKind::Ollama,
@@ -1202,7 +1183,7 @@ pub(crate) mod tests {
                     model_count: 2,
                     disk_gb: Some(9.0),
                 }],
-            })))
+            }))
             .unwrap();
         app.poll_events();
         assert_eq!(app.discovery.installed.len(), 2);
@@ -1216,27 +1197,20 @@ pub(crate) mod tests {
         let mut app = test_app();
         app.refreshing = true;
         app.events_tx
-            .send(BackgroundEvent::Discovered(Ok(Discovery::default())))
+            .send(BackgroundEvent::Discovered(Discovery::default()))
             .unwrap();
         app.poll_events();
         assert!(app.status.contains("no local runtime"), "{}", app.status);
     }
 
     #[test]
-    fn a_failed_discovery_is_reported_without_wiping_what_is_known() {
+    fn a_second_refresh_is_refused_while_one_is_in_flight() {
+        // Two concurrent probes would race to replace the same state and the
+        // loser's result would be thrown away.
         let mut app = test_app();
-        app.discovery.installed.insert("qwen2.5:7b");
         app.refreshing = true;
-        app.events_tx
-            .send(BackgroundEvent::Discovered(Err("no runtime".into())))
-            .unwrap();
-        app.poll_events();
-        assert_eq!(
-            app.discovery.installed.len(),
-            1,
-            "known models are not lost"
-        );
-        assert!(app.status.contains("no runtime"));
+        app.refresh_installed();
+        assert!(app.status.contains("already refreshing"), "{}", app.status);
     }
 
     #[test]

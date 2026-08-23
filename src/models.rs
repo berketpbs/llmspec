@@ -170,7 +170,7 @@ impl Quant {
     pub fn parse(s: &str) -> Option<Quant> {
         let key: String = s
             .chars()
-            .filter(|c| c.is_ascii_alphanumeric())
+            .filter(char::is_ascii_alphanumeric)
             .collect::<String>()
             .to_ascii_lowercase();
         match key.as_str() {
