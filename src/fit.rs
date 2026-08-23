@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::fmt;
 
 use crate::hardware::Hardware;
-use crate::models::{Model, Quant, UseCase};
+use crate::models::{BenchmarkDb, Model, Quant, UseCase};
 
 /// Assumed system-memory bandwidth (GB/s) for CPU-resident weights.
 const CPU_MEM_BANDWIDTH_GB_S: f64 = 60.0;
@@ -311,7 +311,19 @@ impl Placement {
 
 /// Analyse one model against the given hardware.
 pub fn analyze(model: &Model, hw: &Hardware, target: UseCase, cfg: &SpeedConfig) -> FitResult {
-    let (placement, tps, scores) = place(model, hw, target, cfg);
+    let benchmarks = BenchmarkDb::embedded();
+    analyze_with_benchmarks(model, hw, target, cfg, &benchmarks)
+}
+
+/// Analyse one model against the given hardware, with explicit benchmark data.
+pub fn analyze_with_benchmarks(
+    model: &Model,
+    hw: &Hardware,
+    target: UseCase,
+    cfg: &SpeedConfig,
+    benchmarks: &BenchmarkDb,
+) -> FitResult {
+    let (placement, tps, scores) = place(model, hw, target, cfg, benchmarks);
 
     FitResult {
         model_id: model.id.clone(),
@@ -345,7 +357,11 @@ pub fn analyze_all(
     target: UseCase,
     cfg: &SpeedConfig,
 ) -> Vec<FitResult> {
-    let mut results: Vec<FitResult> = models.iter().map(|m| analyze(m, hw, target, cfg)).collect();
+    let benchmarks = BenchmarkDb::embedded();
+    let mut results: Vec<FitResult> = models
+        .iter()
+        .map(|m| analyze_with_benchmarks(m, hw, target, cfg, &benchmarks))
+        .collect();
     sort_by_score(&mut results);
     results
 }
@@ -375,6 +391,7 @@ fn place(
     hw: &Hardware,
     target: UseCase,
     cfg: &SpeedConfig,
+    benchmarks: &BenchmarkDb,
 ) -> (Placement, f64, Scores) {
     let full_context = cfg
         .context_cap
@@ -403,10 +420,10 @@ fn place(
                     continue;
                 };
                 let tps = estimate_tps(model, hw, quant, mode, placement.gpu_fraction(), cfg);
-                let value = placement_value(model, &placement, tps, target);
+                let value = placement_value(model, &placement, tps, target, benchmarks);
                 if value > best_value {
                     best_value = value;
-                    let scores = score(model, &placement, tps, target);
+                    let scores = score(model, &placement, tps, target, benchmarks);
                     best = Some((placement, tps, scores));
                 }
             }
@@ -447,7 +464,7 @@ fn place(
         placement.gpu_fraction(),
         cfg,
     );
-    let scores = score(model, &placement, tps, target);
+    let scores = score(model, &placement, tps, target, benchmarks);
     (placement, tps, scores)
 }
 
@@ -654,7 +671,26 @@ fn use_case_affinity(model: UseCase, target: UseCase) -> f64 {
     }
 }
 
-fn quality_score(model: &Model, quant: Quant, target: UseCase) -> f64 {
+fn quality_score(model: &Model, quant: Quant, target: UseCase, benchmarks: &BenchmarkDb) -> f64 {
+    let heuristic = quality_score_heuristic(model, quant, target);
+
+    // When benchmark data exists for this model family, blend it with the
+    // size heuristic.  The benchmark carries 70% of the weight because it
+    // reflects actual evaluation results (HumanEval, GPQA, arena-style),
+    // while the heuristic still contributes 30% so that parameter count
+    // and quantization loss are never entirely ignored.
+    if let Some(bench) = benchmarks.lookup(&model.id, target) {
+        let bench_adjusted = bench * quant.quality_factor();
+        return (bench_adjusted * 0.70 + heuristic * 0.30).clamp(0.0, 100.0);
+    }
+
+    heuristic
+}
+
+/// Pure heuristic quality score: parameter count, family tier, quantization
+/// loss and use-case affinity.  Used as the fallback when no benchmark data
+/// is available and as 30% of the blended score when it is.
+fn quality_score_heuristic(model: &Model, quant: Quant, target: UseCase) -> f64 {
     // For MoE models the geometric mean of total and active parameters tracks
     // observed quality better than either number alone.
     let effective_params = match model.active_params_b {
@@ -754,8 +790,8 @@ fn context_score(context: u32, target: UseCase) -> f64 {
     }
 }
 
-fn score(model: &Model, placement: &Placement, tps: f64, target: UseCase) -> Scores {
-    let quality = quality_score(model, placement.quant, target);
+fn score(model: &Model, placement: &Placement, tps: f64, target: UseCase, benchmarks: &BenchmarkDb) -> Scores {
+    let quality = quality_score(model, placement.quant, target, benchmarks);
     let speed = speed_score(tps);
     let fit = fit_score(placement.mem_percent);
     let context = context_score(placement.context, target);
@@ -798,11 +834,11 @@ fn usability(tps: f64) -> f64 {
 /// What a user actually gets from a placement is quality, speed and context,
 /// so those alone decide it. Memory pressure is then reported honestly by
 /// [`fit_score`], and still counts when ranking one model against another.
-fn placement_value(model: &Model, placement: &Placement, tps: f64, target: UseCase) -> f64 {
+fn placement_value(model: &Model, placement: &Placement, tps: f64, target: UseCase, benchmarks: &BenchmarkDb) -> f64 {
     if placement.fit == FitLevel::TooTight {
         return 0.0;
     }
-    let quality = quality_score(model, placement.quant, target);
+    let quality = quality_score(model, placement.quant, target, benchmarks);
     let speed = speed_score(tps);
     let context = context_score(placement.context, target);
 
