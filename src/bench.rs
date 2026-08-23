@@ -236,20 +236,53 @@ mod tests {
         assert!(result.ttft_seconds.is_none());
     }
 
+    /// An analysis whose predicted throughput is `tps`.
+    fn analysis(tps: f64) -> FitResult {
+        use crate::fit::{self, SpeedConfig};
+        use crate::hardware::Hardware;
+        use crate::models::{ModelDb, UseCase};
+
+        let db = ModelDb::embedded();
+        let model = db.find("Qwen/Qwen3-8B").unwrap();
+        let mut hw = Hardware::detect();
+        hw.apply_overrides(Some(24.0), Some(64.0), None);
+        let mut result = fit::analyze(model, &hw, UseCase::General, &SpeedConfig::default());
+        result.tokens_per_second = tps;
+        result
+    }
+
     #[test]
     fn estimate_ratio_compares_measured_against_predicted() {
         let mut result = summarize("test", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
-        attach_estimate(&mut result, 25.0);
+        attach_estimate(&mut result, &analysis(25.0), 4.6);
         // 50 measured against 25 estimated: the model was twice as fast.
         assert!((result.estimate_ratio.unwrap() - 2.0).abs() < 1e-6);
     }
 
     #[test]
+    fn the_estimate_records_what_it_assumed() {
+        // Without this a divergent ratio is unactionable: the user cannot
+        // tell whether the model is wrong or the runtime simply loaded a
+        // different quantization.
+        let mut result = summarize("test", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
+        let analysis = analysis(25.0);
+        attach_estimate(&mut result, &analysis, 4.6);
+
+        let assumed = result.assumed.expect("assumptions recorded");
+        assert_eq!(assumed.catalog_id, "Qwen/Qwen3-8B");
+        assert_eq!(assumed.quantization, analysis.quant.label());
+        assert_eq!(assumed.context, analysis.context);
+        assert!((assumed.weights_gb - 4.6).abs() < 1e-9);
+    }
+
+    #[test]
     fn estimate_ratio_is_skipped_when_prediction_is_zero() {
         let mut result = summarize("test", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
-        attach_estimate(&mut result, 0.0);
+        attach_estimate(&mut result, &analysis(0.0), 4.6);
         assert!(result.estimate_ratio.is_none());
         assert_eq!(result.estimated_tps, Some(0.0));
+        // The assumptions are still worth recording.
+        assert!(result.assumed.is_some());
     }
 
     #[test]
