@@ -24,25 +24,34 @@ const VRAM_COMFORTABLE: f64 = 0.95;
 /// Extra headroom on top of the estimate required for a `Perfect` verdict.
 const RECOMMENDED_HEADROOM: f64 = 1.15;
 
-/// The score awarded for meeting a dimension's comfortable target.
-///
-/// Deliberately short of 100. A scoring dimension that hands out full marks
-/// as soon as a threshold is crossed stops separating the models above it,
-/// and those are exactly the models a ranking has to order. Reaching the
-/// target is very good; the remaining 15 points are for genuine headroom.
-const COMFORTABLE_SCORE: f64 = 85.0;
-
 /// Throughput (tok/s) that counts as comfortable — roughly twice reading
-/// speed. Past this the curve keeps rising but only logarithmically.
+/// speed. Past this, extra throughput is real but nearly worthless.
 const COMFORTABLE_TPS: f64 = 40.0;
 
+/// Score for hitting [`COMFORTABLE_TPS`].
+///
+/// Only ten points are held back for everything above it, and that ceiling
+/// matters more than it looks. Faster placements are always available — drop
+/// a quantization level and throughput rises — so if speed above the
+/// comfortable point kept earning real points, the search would trade away
+/// quantization quality for speed nobody can use. Ten points is enough to
+/// separate a 40 tok/s placement from a 200 tok/s one without ever
+/// outweighing the quality it would have to give up.
+const COMFORTABLE_TPS_SCORE: f64 = 90.0;
+
 /// Multiple of [`COMFORTABLE_TPS`] at which the speed score reaches 100.
-/// Three times reading speed is as much as anyone can use interactively.
-const SPEED_SATURATION: f64 = 3.0;
+const SPEED_SATURATION: f64 = 6.0;
 
 /// Curve exponent below the comfortable point. Under 1 the curve is concave,
 /// so the first tokens per second matter far more than the last.
 const SPEED_SCORE_EXPONENT: f64 = 0.5;
+
+/// Score for exactly meeting the use case's context target.
+///
+/// Context above the target is worth more than speed above the comfortable
+/// point — a longer window changes what a model can be asked to do — so more
+/// of the range is reserved for it.
+const TARGET_CONTEXT_SCORE: f64 = 85.0;
 
 /// Multiple of the use case's target context at which the context score
 /// reaches 100.
