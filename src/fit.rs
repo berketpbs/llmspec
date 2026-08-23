@@ -790,7 +790,13 @@ fn context_score(context: u32, target: UseCase) -> f64 {
     }
 }
 
-fn score(model: &Model, placement: &Placement, tps: f64, target: UseCase, benchmarks: &BenchmarkDb) -> Scores {
+fn score(
+    model: &Model,
+    placement: &Placement,
+    tps: f64,
+    target: UseCase,
+    benchmarks: &BenchmarkDb,
+) -> Scores {
     let quality = quality_score(model, placement.quant, target, benchmarks);
     let speed = speed_score(tps);
     let fit = fit_score(placement.mem_percent);
@@ -834,7 +840,13 @@ fn usability(tps: f64) -> f64 {
 /// What a user actually gets from a placement is quality, speed and context,
 /// so those alone decide it. Memory pressure is then reported honestly by
 /// [`fit_score`], and still counts when ranking one model against another.
-fn placement_value(model: &Model, placement: &Placement, tps: f64, target: UseCase, benchmarks: &BenchmarkDb) -> f64 {
+fn placement_value(
+    model: &Model,
+    placement: &Placement,
+    tps: f64,
+    target: UseCase,
+    benchmarks: &BenchmarkDb,
+) -> f64 {
     if placement.fit == FitLevel::TooTight {
         return 0.0;
     }

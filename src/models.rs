@@ -468,7 +468,7 @@ impl BenchmarkDb {
             for pattern in &family.patterns {
                 if id_lower.contains(pattern) {
                     let len = pattern.len();
-                    if best.map_or(true, |(prev_len, _)| len > prev_len) {
+                    if best.is_none_or(|(prev_len, _)| len > prev_len) {
                         if let Some(&score) = family.scores.get(key) {
                             best = Some((len, score));
                         }
