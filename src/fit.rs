@@ -24,15 +24,37 @@ const VRAM_COMFORTABLE: f64 = 0.95;
 /// Extra headroom on top of the estimate required for a `Perfect` verdict.
 const RECOMMENDED_HEADROOM: f64 = 1.15;
 
-/// Throughput (tok/s) mapped to a speed score of 100. Set at roughly twice
-/// reading speed: past this point extra tokens per second buy nothing, and
-/// letting them keep earning points would trade away quantization quality for
-/// speed nobody can use.
-const SPEED_SCORE_CEILING: f64 = 40.0;
+/// The score awarded for meeting a dimension's comfortable target.
+///
+/// Deliberately short of 100. A scoring dimension that hands out full marks
+/// as soon as a threshold is crossed stops separating the models above it,
+/// and those are exactly the models a ranking has to order. Reaching the
+/// target is very good; the remaining 15 points are for genuine headroom.
+const COMFORTABLE_SCORE: f64 = 85.0;
 
-/// Curve exponent for the speed score. Below 1 the curve is concave, so the
-/// first tokens per second matter far more than the last.
+/// Throughput (tok/s) that counts as comfortable — roughly twice reading
+/// speed. Past this the curve keeps rising but only logarithmically.
+const COMFORTABLE_TPS: f64 = 40.0;
+
+/// Multiple of [`COMFORTABLE_TPS`] at which the speed score reaches 100.
+/// Three times reading speed is as much as anyone can use interactively.
+const SPEED_SATURATION: f64 = 3.0;
+
+/// Curve exponent below the comfortable point. Under 1 the curve is concave,
+/// so the first tokens per second matter far more than the last.
 const SPEED_SCORE_EXPONENT: f64 = 0.5;
+
+/// Multiple of the use case's target context at which the context score
+/// reaches 100.
+const CONTEXT_SATURATION: f64 = 4.0;
+
+/// Free memory (percentage points) treated as all the headroom a placement
+/// needs. Above this there is nothing more to gain from leaving VRAM idle.
+const COMFORTABLE_HEADROOM: f64 = 35.0;
+
+/// Curve exponent for headroom. Concave, so losing the first few points of
+/// free memory costs little and the last few cost a lot.
+const HEADROOM_EXPONENT: f64 = 0.45;
 
 /// Throughput below which a model is not really usable interactively. Scores
 /// are scaled down towards zero underneath it, so a placement that technically
@@ -674,12 +696,27 @@ fn fit_score(mem_percent: f64) -> f64 {
 /// Context capacity score. Sub-target context is penalised on a square-root
 /// curve: the marginal value of context falls off, so 16k against a 64k target
 /// is worth half the points rather than a quarter.
+/// Context score.
+///
+/// Meeting the use case's target scores [`COMFORTABLE_SCORE`]; beyond it the
+/// curve keeps rising logarithmically up to [`CONTEXT_SATURATION`] times the
+/// target, because more room genuinely helps but with sharply diminishing
+/// value. Below the target the penalty is a square root, so 16k against a 32k
+/// target is worth more than half the points rather than a quarter.
+///
+/// The earlier version returned a flat 100 for anything at or above the
+/// target, which made a 32k model and a 256k model indistinguishable for
+/// coding and put the entire top of the table on the same number.
 fn context_score(context: u32, target: UseCase) -> f64 {
     let ratio = f64::from(context) / target.target_context();
-    if ratio >= 1.0 {
-        100.0
+    if ratio <= 0.0 {
+        return 0.0;
+    }
+    if ratio <= 1.0 {
+        COMFORTABLE_SCORE * ratio.sqrt()
     } else {
-        (100.0 * ratio.sqrt()).clamp(0.0, 100.0)
+        let headroom = ratio.ln() / CONTEXT_SATURATION.ln();
+        (COMFORTABLE_SCORE + (100.0 - COMFORTABLE_SCORE) * headroom).min(100.0)
     }
 }
 
