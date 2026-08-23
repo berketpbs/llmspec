@@ -17,6 +17,7 @@ const COL_PARAMS: usize = 7;
 const COL_QUANT: usize = 7;
 const COL_MODE: usize = 8;
 const COL_FIT: usize = 10;
+const COL_SIZE: usize = 8;
 const COL_MEM: usize = 6;
 const COL_CTX: usize = 7;
 const COL_TPS: usize = 8;
@@ -160,7 +161,7 @@ pub fn render_system(hw: &Hardware) -> String {
 pub fn render_table(results: &[FitResult]) -> String {
     let mut out = String::new();
     let header = format!(
-        "{} {} {} {} {} {} {} {} {} {} {} {}",
+        "{} {} {} {} {} {} {} {} {} {} {} {} {}",
         pad("#", COL_RANK),
         pad("Model", COL_NAME),
         pad("Provider", COL_PROVIDER),
@@ -168,6 +169,7 @@ pub fn render_table(results: &[FitResult]) -> String {
         pad("Quant", COL_QUANT),
         pad("Mode", COL_MODE),
         pad("Fit", COL_FIT),
+        rpad("Size", COL_SIZE),
         rpad("Mem%", COL_MEM),
         rpad("Ctx", COL_CTX),
         rpad("tok/s", COL_TPS),
@@ -181,8 +183,15 @@ pub fn render_table(results: &[FitResult]) -> String {
     ));
 
     for (i, r) in results.iter().enumerate() {
+        // A context below the model's own maximum changes what it is good
+        // for, so the figure is coloured rather than shown bare.
+        let context = if r.context_is_reduced() {
+            rpad(&format_context(r.context), COL_CTX).yellow()
+        } else {
+            rpad(&format_context(r.context), COL_CTX).normal()
+        };
         out.push_str(&format!(
-            "{} {} {} {} {} {} {} {} {} {} {} {}\n",
+            "{} {} {} {} {} {} {} {} {} {} {} {} {}\n",
             pad(&(i + 1).to_string(), COL_RANK).bright_black(),
             pad(&r.name, COL_NAME),
             pad(&r.provider, COL_PROVIDER).bright_black(),
@@ -190,8 +199,9 @@ pub fn render_table(results: &[FitResult]) -> String {
             pad(r.quant.label(), COL_QUANT),
             pad(r.mode.label(), COL_MODE).color(mode_color(r.mode)),
             pad(r.fit.label(), COL_FIT).color(fit_color(r.fit)),
+            rpad(&format_size_gb(r.download_gb), COL_SIZE),
             rpad(&format!("{:.0}%", r.mem_percent), COL_MEM),
-            rpad(&format_context(r.context), COL_CTX),
+            context,
             rpad(&format_tps(r.tokens_per_second), COL_TPS),
             rpad(&format!("{:.1}", r.scores.composite), COL_SCORE).bold(),
             pad(r.use_case.as_str(), COL_USE).bright_black(),
