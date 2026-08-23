@@ -67,6 +67,41 @@ pub struct Assumptions {
 pub struct BenchReport {
     pub system: HardwareSummary,
     pub results: Vec<BenchResult>,
+    /// Efficiency factor that would have made the estimates match what was
+    /// measured, or `None` when nothing could be compared.
+    pub suggested_efficiency: Option<f64>,
+}
+
+impl BenchReport {
+    pub fn new(system: HardwareSummary, results: Vec<BenchResult>, current_efficiency: f64) -> Self {
+        let suggested = suggested_efficiency(&results, current_efficiency);
+        BenchReport {
+            system,
+            results,
+            suggested_efficiency: suggested,
+        }
+    }
+}
+
+/// The efficiency factor that would reconcile estimate with measurement.
+///
+/// The speed model is linear in `efficiency`, so scaling the current value by
+/// the median measured/estimated ratio lands the estimate on the measurement.
+/// Calibrating from the median rather than a single run keeps one unlucky
+/// benchmark from moving the setting.
+fn suggested_efficiency(results: &[BenchResult], current: f64) -> Option<f64> {
+    let mut ratios: Vec<f64> = results
+        .iter()
+        .filter_map(|r| r.estimate_ratio)
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .collect();
+    if ratios.is_empty() {
+        return None;
+    }
+    ratios.sort_by(f64::total_cmp);
+    // The efficiency factor is a fraction of peak bandwidth, so it cannot
+    // exceed 1.0 however fast the measurement was.
+    Some((current * median(&ratios)).clamp(0.01, 1.0))
 }
 
 /// The parts of the machine a benchmark number is only meaningful alongside.

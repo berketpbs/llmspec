@@ -382,10 +382,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 results.push(result);
             }
 
-            let report = bench::BenchReport {
-                system: bench::HardwareSummary::from(&hw),
-                results,
-            };
+            let report =
+                bench::BenchReport::new(bench::HardwareSummary::from(&hw), results, cfg.efficiency);
             if cli.json {
                 println!("{}", display::to_json(&report));
             } else {
