@@ -1,10 +1,14 @@
 //! llmspec — find the LLMs that actually run well on your hardware.
 
+mod bench;
+mod config;
 mod display;
+mod doctor;
 mod fit;
 mod hardware;
 mod models;
 mod providers;
+mod serve;
 mod tui_app;
 mod tui_events;
 mod tui_ui;
@@ -12,9 +16,11 @@ mod tui_ui;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
+use crate::config::Config;
 use crate::fit::{FitLevel, FitResult, RunMode, SpeedConfig};
 use crate::hardware::{Hardware, parse_size_gb};
 use crate::models::{ModelDb, Quant, UseCase};
+use crate::providers::{ProviderRegistry, Runtime, RuntimeKind};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -54,6 +60,10 @@ struct Cli {
     /// Target use case: general, coding, reasoning, chat, multimodal, embedding
     #[arg(long, short = 'u', global = true, value_name = "USE_CASE")]
     use_case: Option<String>,
+
+    /// Score for a specific runtime: ollama, llamacpp, lmstudio, vllm, docker, mlx
+    #[arg(long, global = true, value_name = "RUNTIME")]
+    force_runtime: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -112,6 +122,38 @@ enum Command {
         /// Human-readable table instead of JSON
         #[arg(long)]
         table: bool,
+    },
+
+    /// Diagnostic report: what was detected, and what had to be guessed
+    Doctor,
+
+    /// List the local inference runtimes that are currently running
+    Runtimes,
+
+    /// Measure real tokens/sec against a running runtime
+    Bench {
+        /// Model reference as the runtime names it, e.g. "qwen2.5:7b".
+        /// Defaults to every model the runtime reports.
+        model: Vec<String>,
+        /// Benchmark every model the runtime has installed
+        #[arg(long)]
+        all: bool,
+        /// Timed runs per model (the first, untimed, run loads the model)
+        #[arg(long, default_value_t = 3, value_name = "N")]
+        runs: usize,
+        /// Tokens to generate per run
+        #[arg(long, value_name = "N")]
+        tokens: Option<u32>,
+    },
+
+    /// Serve the fit analysis over a read-only HTTP API
+    Serve {
+        /// Address to bind. Loopback by default: the API reports this machine's hardware
+        #[arg(long, default_value = "127.0.0.1", value_name = "HOST")]
+        host: String,
+        /// Port to listen on
+        #[arg(long, default_value_t = 8228, value_name = "PORT")]
+        port: u16,
     },
 
     /// Plan hardware requirements for a model configuration

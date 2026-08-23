@@ -539,6 +539,71 @@ fn detect_intel() -> Vec<Gpu> {
         .collect()
 }
 
+/// Windows display adapters, read from the driver's registry key.
+///
+/// `Win32_VideoController.AdapterRAM` is a 32-bit field and silently saturates
+/// at 4 GB, which would understate every modern card. The driver class key
+/// carries the real figure as a 64-bit `qwMemorySize`.
+fn detect_windows_gpus(vendor: Vendor) -> Vec<Gpu> {
+    if !cfg!(target_os = "windows") {
+        return Vec::new();
+    }
+    const CLASS_KEY: &str =
+        r"HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+    let script = format!(
+        "Get-ChildItem '{CLASS_KEY}' -ErrorAction SilentlyContinue | ForEach-Object {{ \
+           $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; \
+           if ($p.DriverDesc) {{ \
+             '{{0}}|{{1}}' -f $p.DriverDesc, $p.'HardwareInformation.qwMemorySize' }} }}"
+    );
+    let Some(output) = run(
+        "powershell",
+        &["-NoProfile", "-NonInteractive", "-Command", &script],
+    ) else {
+        return Vec::new();
+    };
+
+    output
+        .lines()
+        .filter_map(|line| parse_windows_adapter(line, vendor))
+        .collect()
+}
+
+/// Parse one `DriverDesc|qwMemorySize` line, keeping only `vendor`'s adapters.
+fn parse_windows_adapter(line: &str, vendor: Vendor) -> Option<Gpu> {
+    let (name, size) = line.split_once('|')?;
+    let name = name.trim();
+    if name.is_empty() || !matches_vendor(name, vendor) {
+        return None;
+    }
+    let table = lookup_gpu(name);
+    let reported = size.trim().parse::<f64>().ok().filter(|b| *b > 0.0);
+    let (vram_gb, estimated) = match reported {
+        Some(bytes) => (bytes / BYTES_PER_GB, false),
+        None => (table.map(|(_, vram)| vram).unwrap_or(0.0), true),
+    };
+    Some(Gpu {
+        name: name.to_string(),
+        vendor,
+        vram_gb,
+        bandwidth_gb_s: table.map(|(bw, _)| bw),
+        vram_estimated: estimated,
+    })
+}
+
+fn matches_vendor(name: &str, vendor: Vendor) -> bool {
+    let lower = name.to_ascii_lowercase();
+    match vendor {
+        Vendor::Amd => {
+            lower.contains("amd") || lower.contains("radeon") || lower.contains("instinct")
+        }
+        Vendor::Intel => lower.contains("intel") || lower.contains("arc"),
+        Vendor::Nvidia => lower.contains("nvidia") || lower.contains("geforce"),
+        Vendor::Apple => lower.contains("apple"),
+        Vendor::Unknown => true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Size parsing for CLI overrides
 // ---------------------------------------------------------------------------
@@ -595,6 +660,52 @@ mod tests {
         let (bw, vram) = lookup_gpu("NVIDIA GeForce RTX 4090").unwrap();
         assert_eq!(vram, 24.0);
         assert_eq!(bw, 1008.0);
+    }
+
+    #[test]
+    fn windows_adapter_lines_are_parsed() {
+        let gpu = parse_windows_adapter("AMD Radeon RX 7900 XTX|25753026560", Vendor::Amd).unwrap();
+        assert_eq!(gpu.vendor, Vendor::Amd);
+        assert!((gpu.vram_gb - 24.0).abs() < 0.1, "got {}", gpu.vram_gb);
+        assert!(!gpu.vram_estimated);
+        assert_eq!(gpu.bandwidth_gb_s, Some(960.0));
+    }
+
+    #[test]
+    fn windows_adapter_without_a_size_falls_back_to_the_table() {
+        let gpu = parse_windows_adapter("Intel(R) Arc(TM) A770 Graphics|", Vendor::Intel).unwrap();
+        assert!(gpu.vram_estimated);
+        assert_eq!(gpu.vram_gb, 16.0);
+    }
+
+    #[test]
+    fn windows_adapter_lines_are_filtered_by_vendor() {
+        // A machine can list several adapters; only the asked-for vendor's
+        // entries belong in the result.
+        assert!(parse_windows_adapter("NVIDIA GeForce RTX 4090|100", Vendor::Amd).is_none());
+        assert!(parse_windows_adapter("|1024", Vendor::Amd).is_none());
+        assert!(parse_windows_adapter("no separator", Vendor::Amd).is_none());
+    }
+
+    #[test]
+    fn apple_silicon_sizes_vram_from_unified_memory() {
+        // Off macOS the probe is inert, so assert the sizing rule directly.
+        let table = lookup_gpu("Apple M3 Max").unwrap();
+        assert_eq!(table.0, 400.0);
+        assert!((128.0 * APPLE_UNIFIED_VRAM_FRACTION - 96.0).abs() < 1e-9);
+        assert!(detect_apple("Intel Core i7", 32.0).is_empty());
+    }
+
+    #[test]
+    fn apple_vendor_selects_the_metal_backend() {
+        let gpus = vec![Gpu {
+            name: "Apple M3 Pro".into(),
+            vendor: Vendor::Apple,
+            vram_gb: 27.0,
+            bandwidth_gb_s: Some(150.0),
+            vram_estimated: true,
+        }];
+        assert_eq!(backend_for(&gpus, "aarch64"), Backend::Metal);
     }
 
     #[test]
