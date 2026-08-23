@@ -406,7 +406,6 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "ollama": "qwen3:30b-a3b",
       "active_params_b": 3.3,
       "layers": 48,
       "kv_heads": 4,
@@ -1579,8 +1578,7 @@
         "reasoning"
       ],
       "quality_tier": 4,
-      "gguf": true,
-      "ollama": "deepseek-r1:8b"
+      "gguf": true
     },
     {
       "id": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
@@ -3039,7 +3037,6 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "ollama": "mistral-small:24b",
       "layers": 40,
       "hidden_size": 5120,
       "kv_heads": 8,
