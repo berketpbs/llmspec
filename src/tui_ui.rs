@@ -791,8 +791,8 @@ mod tests {
 
     #[test]
     fn renders_system_panel_and_models() {
-        let mut app = test_app();
-        let out = screen(&mut app, 150, 30);
+        let app = test_app();
+        let out = screen(&app, 150, 30);
         assert!(out.contains("llmspec"), "{out}");
         assert!(out.contains("SIMULATED"), "simulated hardware is badged");
         assert!(out.contains("Test CPU"));
@@ -804,7 +804,7 @@ mod tests {
     #[test]
     fn the_system_panel_reports_runtime_status() {
         let mut app = test_app();
-        assert!(screen(&mut app, 150, 30).contains("no local runtime"));
+        assert!(screen(&app, 150, 30).contains("no local runtime"));
 
         app.discovery.runtimes = vec![DiscoveredRuntime {
             kind: RuntimeKind::LmStudio,
@@ -813,13 +813,13 @@ mod tests {
             model_count: 3,
             disk_gb: None,
         }];
-        assert!(screen(&mut app, 150, 30).contains("LM Studio"));
+        assert!(screen(&app, 150, 30).contains("LM Studio"));
     }
 
     #[test]
     fn the_table_shows_download_size_and_install_state() {
         let mut app = test_app();
-        let out = screen(&mut app, 150, 30);
+        let out = screen(&app, 150, 30);
         assert!(out.contains("On disk"), "install column header missing");
         assert!(out.contains("Size"), "download-size column header missing");
 
@@ -833,7 +833,7 @@ mod tests {
             .expect("catalog has ollama tags");
         app.discovery.installed.insert(&tag);
         app.refilter();
-        assert!(screen(&mut app, 150, 30).contains("yes"));
+        assert!(screen(&app, 150, 30).contains("yes"));
     }
 
     #[test]
@@ -848,7 +848,7 @@ mod tests {
         app.selected = row;
         app.mode = Mode::Detail;
 
-        let out = screen(&mut app, 150, 44);
+        let out = screen(&app, 150, 44);
         assert!(out.contains("Detail"));
         assert!(out.contains("Run it"), "{out}");
         assert!(out.contains("ollama pull"), "{out}");
@@ -869,7 +869,7 @@ mod tests {
         app.discovery.installed.insert(&tag);
         app.mode = Mode::Detail;
 
-        let out = screen(&mut app, 150, 44);
+        let out = screen(&app, 150, 44);
         assert!(out.contains("ollama run"), "{out}");
     }
 
@@ -881,13 +881,13 @@ mod tests {
 
         app.mode = Mode::Detail;
         assert!(
-            screen(&mut app, 150, 44).contains("Context"),
+            screen(&app, 150, 44).contains("Context"),
             "the detail panel's last score bar is clipped"
         );
 
         app.mode = Mode::Plan;
         assert!(
-            screen(&mut app, 150, 44).contains("Viable"),
+            screen(&app, 150, 44).contains("Viable"),
             "the plan panel's last line is clipped"
         );
 
@@ -895,7 +895,7 @@ mod tests {
         app.move_selection(1);
         app.mode = Mode::Comparison;
         assert!(
-            screen(&mut app, 150, 44).contains("Parameters"),
+            screen(&app, 150, 44).contains("Parameters"),
             "the comparison panel's last row is clipped"
         );
     }
@@ -906,7 +906,7 @@ mod tests {
         app.mark_for_comparison();
         app.move_selection(1);
         app.mode = Mode::Comparison;
-        let out = screen(&mut app, 150, 44);
+        let out = screen(&app, 150, 44);
 
         assert!(out.contains("marked (m)"));
         // Debug formatting would print Q4KM and TooTight, which are not words.
@@ -919,7 +919,7 @@ mod tests {
     fn the_help_popup_lists_every_binding() {
         let mut app = test_app();
         app.mode = Mode::Help;
-        let out = screen(&mut app, 150, 46);
+        let out = screen(&app, 150, 46);
         assert!(out.contains("Key bindings"));
         // Keys that the earlier help omitted entirely.
         for expected in ["sort column", "colour theme", "hardware plan", "simulate"] {
@@ -936,7 +936,7 @@ mod tests {
         app.mode = Mode::Search;
         app.search = "qwen".into();
         app.refilter();
-        let out = screen(&mut app, 150, 30);
+        let out = screen(&app, 150, 30);
         assert!(out.contains("qwen"), "{out}");
     }
 
@@ -944,13 +944,13 @@ mod tests {
     fn form_popups_show_values_and_the_active_field_hint() {
         let mut app = test_app();
         app.open_simulation();
-        let out = screen(&mut app, 150, 30);
+        let out = screen(&app, 150, 30);
         assert!(out.contains("Simulate hardware"));
         assert!(out.contains("VRAM (GB)"));
         assert!(out.contains("accelerator memory"), "active hint missing");
 
         app.open_advanced_config();
-        let out = screen(&mut app, 150, 30);
+        let out = screen(&app, 150, 30);
         assert!(out.contains("Speed model"));
         assert!(out.contains("Efficiency"));
         assert!(out.contains("bandwidth"), "{out}");
@@ -958,14 +958,14 @@ mod tests {
 
     #[test]
     fn a_reduced_context_is_visually_marked() {
-        let mut app = test_app();
+        let app = test_app();
         // On 12 GB of VRAM at least one long-context model must run short.
         assert!(
             app.results.iter().any(FitResult::context_is_reduced),
             "expected some model to be placed below its native context"
         );
         // Rendering it must not panic and the row still shows a context.
-        assert!(screen(&mut app, 150, 30).contains("Ctx"));
+        assert!(screen(&app, 150, 30).contains("Ctx"));
     }
 
     #[test]
@@ -974,7 +974,7 @@ mod tests {
         app.mode = Mode::Detail;
         for theme in Theme::ALL {
             app.theme = theme;
-            let out = screen(&mut app, 150, 44);
+            let out = screen(&app, 150, 44);
             assert!(out.contains("llmspec"), "{} failed to render", theme.name());
         }
     }
@@ -999,7 +999,7 @@ mod tests {
                 Mode::Search,
             ] {
                 app.mode = mode;
-                screen(&mut app, w, h);
+                screen(&app, w, h);
             }
         }
     }
