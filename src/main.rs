@@ -111,6 +111,15 @@ enum Command {
         /// Only show models placed in this run mode: gpu, moe, cpu+gpu, cpu
         #[arg(long, value_name = "MODE")]
         mode: Option<String>,
+        /// Only show models estimated to reach at least this many tokens/sec
+        #[arg(long, value_name = "TPS")]
+        min_tps: Option<f64>,
+        /// Only show models whose download is at most this size, e.g. 8G
+        #[arg(long, value_name = "SIZE")]
+        max_size: Option<String>,
+        /// Only show models that hold at least this much context
+        #[arg(long, value_name = "TOKENS")]
+        min_context: Option<u32>,
         /// Maximum number of rows
         #[arg(short = 'n', long)]
         limit: Option<usize>,
