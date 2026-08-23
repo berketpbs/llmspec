@@ -764,6 +764,22 @@ mod tests {
     }
 
     #[test]
+    fn no_command_is_offered_that_the_runtime_could_not_execute() {
+        let (_, mut result) = sample();
+
+        // A GGUF loader cannot open a model with no GGUF build.
+        result.gguf = false;
+        assert_eq!(model_reference(&result, RuntimeKind::LlamaCpp), None);
+        // vLLM reads the original safetensors, so it is unaffected.
+        assert!(model_reference(&result, RuntimeKind::Vllm).is_some());
+
+        // A registry-backed runtime cannot take an upstream repo id.
+        result.gguf = true;
+        result.ollama = None;
+        assert_eq!(model_reference(&result, RuntimeKind::Ollama), None);
+    }
+
+    #[test]
     fn the_plan_view_separates_disk_from_memory_and_names_the_quantization() {
         use crate::fit::{SpeedConfig, plan};
         use crate::models::{ModelDb, Quant};
