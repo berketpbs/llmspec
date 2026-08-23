@@ -448,6 +448,49 @@ mod tests {
     }
 
     #[test]
+    fn runtime_names_resolve_back_to_catalog_entries() {
+        // A benchmark arrives under whatever the runtime calls the model; if
+        // it does not resolve, the measurement cannot be compared with the
+        // estimate and the comparison column is silently blank.
+        let db = db();
+        for reference in [
+            "qwen3:8b",
+            "Qwen3-8B",
+            "qwen3-8b",
+            "Qwen/Qwen3-8B",
+            "Qwen3-8B-Q4_K_M.gguf",
+        ] {
+            let found = db
+                .find_for_runtime(reference)
+                .unwrap_or_else(|| panic!("'{reference}' did not resolve"));
+            assert_eq!(found.id, "Qwen/Qwen3-8B", "'{reference}' resolved wrongly");
+        }
+    }
+
+    #[test]
+    fn an_unknown_runtime_name_resolves_to_nothing() {
+        let db = db();
+        assert!(
+            db.find_for_runtime("some-private-finetune:latest")
+                .is_none()
+        );
+        assert!(db.find_for_runtime("").is_none());
+    }
+
+    #[test]
+    fn exact_matches_beat_fuzzy_ones() {
+        let db = db();
+        // "phi-4" must find Phi-4 itself, not Phi-4-mini, which also contains
+        // the query as a substring.
+        assert_eq!(db.find("microsoft/phi-4").unwrap().id, "microsoft/phi-4");
+        // A runtime tag resolves to the model that claims it.
+        assert_eq!(
+            db.find("qwen2.5:7b").unwrap().id,
+            "Qwen/Qwen2.5-7B-Instruct"
+        );
+    }
+
+    #[test]
     fn every_model_id_is_unique() {
         let db = db();
         let mut ids: Vec<&str> = db.models.iter().map(|m| m.id.as_str()).collect();
