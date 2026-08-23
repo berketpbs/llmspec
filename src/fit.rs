@@ -201,6 +201,10 @@ pub struct FitResult {
     pub resident_gb: f64,
     /// Percentage of the constraining memory pool that is used.
     pub mem_percent: f64,
+    /// Size of the weights alone — what the download costs and what the file
+    /// occupies on disk. Excludes the KV cache and runtime overhead, which
+    /// exist only while the model is loaded.
+    pub download_gb: f64,
     pub tokens_per_second: f64,
     pub scores: Scores,
 }
@@ -208,6 +212,14 @@ pub struct FitResult {
 impl FitResult {
     pub fn is_runnable(&self) -> bool {
         self.fit.is_runnable()
+    }
+
+    /// True when the placement had to run the model below its native context.
+    ///
+    /// Worth surfacing: a model advertised at 128k that only fits at 8k here
+    /// is a different tool than the one on the model card.
+    pub fn context_is_reduced(&self) -> bool {
+        self.context < self.max_context
     }
 }
 
@@ -283,6 +295,7 @@ pub fn analyze(model: &Model, hw: &Hardware, target: UseCase, cfg: &SpeedConfig)
         required_gb: placement.required_gb,
         resident_gb: placement.resident_gb,
         mem_percent: placement.mem_percent,
+        download_gb: model.weights_gb(placement.quant),
         tokens_per_second: tps,
         scores,
     }
@@ -773,6 +786,40 @@ mod tests {
         let r = analyze(m, &hw(8.0, 32.0), UseCase::General, &SpeedConfig::default());
         assert_eq!(r.mode, RunMode::Gpu);
         assert!(r.context < m.context_length);
+    }
+
+    #[test]
+    fn download_size_is_the_weights_alone() {
+        let db = ModelDb::embedded();
+        let m = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
+        let r = analyze(m, &hw(24.0, 64.0), UseCase::General, &SpeedConfig::default());
+        // The download is the weight file; the KV cache and runtime overhead
+        // only exist once the model is loaded, so they must not be counted.
+        assert!((r.download_gb - m.weights_gb(r.quant)).abs() < 1e-9);
+        assert!(
+            r.download_gb < r.required_gb,
+            "download {:.2} should be under the {:.2} GB needed to run it",
+            r.download_gb,
+            r.required_gb
+        );
+    }
+
+    #[test]
+    fn reduced_context_is_flagged() {
+        let db = ModelDb::embedded();
+        let m = db.find("Qwen/Qwen3-4B-Instruct-2507").unwrap();
+        // 262k never fits 8 GB, so the placement runs short and says so.
+        let tight = analyze(m, &hw(8.0, 32.0), UseCase::General, &SpeedConfig::default());
+        assert!(tight.context_is_reduced());
+        assert!(tight.context < tight.max_context);
+
+        let roomy = analyze(
+            m,
+            &hw(160.0, 256.0),
+            UseCase::General,
+            &SpeedConfig::default(),
+        );
+        assert!(!roomy.context_is_reduced(), "full context should fit here");
     }
 
     #[test]

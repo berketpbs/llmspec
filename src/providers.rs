@@ -167,16 +167,38 @@ impl RuntimeKind {
         !matches!(self, RuntimeKind::Mlx | RuntimeKind::Vllm)
     }
 
-    /// Command that installs a model for this runtime, when one exists.
-    pub fn install_hint(self, model_ref: &str) -> Option<String> {
+    /// Command that downloads a model for this runtime.
+    pub fn install_command(self, model_ref: &str) -> String {
         match self {
-            RuntimeKind::Ollama => Some(format!("ollama pull {model_ref}")),
-            RuntimeKind::DockerModelRunner => Some(format!("docker model pull {model_ref}")),
-            RuntimeKind::Mlx => Some(format!("mlx_lm.generate --model {model_ref}")),
-            RuntimeKind::LlamaCpp => Some(format!("llama-server -hf {model_ref}")),
-            RuntimeKind::LmStudio => Some(format!("lms get {model_ref}")),
-            RuntimeKind::Vllm => Some(format!("vllm serve {model_ref}")),
+            RuntimeKind::Ollama => format!("ollama pull {model_ref}"),
+            RuntimeKind::DockerModelRunner => format!("docker model pull {model_ref}"),
+            RuntimeKind::Mlx => format!("mlx_lm.convert --hf-path {model_ref}"),
+            RuntimeKind::LlamaCpp => format!("llama-server -hf {model_ref}"),
+            RuntimeKind::LmStudio => format!("lms get {model_ref}"),
+            RuntimeKind::Vllm => format!("vllm serve {model_ref}"),
         }
+    }
+
+    /// Command that starts an interactive session with an installed model.
+    ///
+    /// For the server-shaped runtimes this is the same command that installs
+    /// it — they fetch on first use and then serve — so the two differ only
+    /// where the runtime separates the steps.
+    pub fn run_command(self, model_ref: &str) -> String {
+        match self {
+            RuntimeKind::Ollama => format!("ollama run {model_ref}"),
+            RuntimeKind::DockerModelRunner => format!("docker model run {model_ref}"),
+            RuntimeKind::Mlx => format!("mlx_lm.generate --model {model_ref} --prompt 'hello'"),
+            RuntimeKind::LlamaCpp => format!("llama-server -hf {model_ref}"),
+            RuntimeKind::LmStudio => format!("lms load {model_ref}"),
+            RuntimeKind::Vllm => format!("vllm serve {model_ref}"),
+        }
+    }
+
+    /// Whether this runtime identifies models by a registry tag of its own
+    /// rather than by the upstream repository id.
+    pub fn uses_own_registry(self) -> bool {
+        matches!(self, RuntimeKind::Ollama | RuntimeKind::DockerModelRunner)
     }
 }
 
@@ -302,10 +324,11 @@ impl Runtime {
                     .map_err(|e| format!("POST {url} ({model_ref}): {e}"))?;
                 Ok(())
             }
-            other => Err(match other.install_hint(model_ref) {
-                Some(cmd) => format!("{} has no pull API — run: {cmd}", other.label()),
-                None => format!("{} has no pull API", other.label()),
-            }),
+            other => Err(format!(
+                "{} has no pull API — run: {}",
+                other.label(),
+                other.install_command(model_ref)
+            )),
         }
     }
 
@@ -823,16 +846,34 @@ mod tests {
     }
 
     #[test]
-    fn install_hints_are_runtime_specific() {
+    fn install_and_run_commands_are_runtime_specific() {
         assert_eq!(
-            RuntimeKind::Ollama.install_hint("llama3.2:1b").unwrap(),
+            RuntimeKind::Ollama.install_command("llama3.2:1b"),
             "ollama pull llama3.2:1b"
+        );
+        assert_eq!(
+            RuntimeKind::Ollama.run_command("llama3.2:1b"),
+            "ollama run llama3.2:1b"
         );
         assert!(
             RuntimeKind::Vllm
-                .install_hint("Qwen/Qwen2.5-7B-Instruct")
-                .unwrap()
+                .install_command("Qwen/Qwen2.5-7B-Instruct")
                 .starts_with("vllm serve")
         );
+        // Every runtime must produce a non-empty command naming the model.
+        for kind in RuntimeKind::ALL {
+            for command in [kind.install_command("some/model"), kind.run_command("some/model")] {
+                assert!(command.contains("some/model"), "{}: {command}", kind.slug());
+            }
+        }
+    }
+
+    #[test]
+    fn registry_backed_runtimes_are_marked() {
+        // These name models by their own tag; the rest use the upstream repo id.
+        assert!(RuntimeKind::Ollama.uses_own_registry());
+        assert!(RuntimeKind::DockerModelRunner.uses_own_registry());
+        assert!(!RuntimeKind::Vllm.uses_own_registry());
+        assert!(!RuntimeKind::LlamaCpp.uses_own_registry());
     }
 }
