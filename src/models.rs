@@ -275,21 +275,26 @@ impl Model {
         }
     }
 
-    pub fn overhead_gb(&self, resident_weights_gb: f64) -> f64 {
+    /// Runtime overhead on top of the weights: the accelerator context,
+    /// compute buffers and allocator slack.
+    ///
+    /// Independent of the model, so it takes no `self` — it is grouped here
+    /// because it is only ever added to a model's own footprint.
+    pub fn overhead_gb(resident_weights_gb: f64) -> f64 {
         BASE_OVERHEAD_GB + resident_weights_gb * OVERHEAD_WEIGHT_FRACTION
     }
 
     /// Total memory needed to run the whole model at `quant` with `context`.
     pub fn total_memory_gb(&self, quant: Quant, context: u32) -> f64 {
         let weights = self.weights_gb(quant);
-        weights + self.kv_cache_gb(context) + self.overhead_gb(weights)
+        weights + self.kv_cache_gb(context) + Model::overhead_gb(weights)
     }
 
     /// Memory that must be resident on the accelerator when experts are
     /// offloaded to system RAM. Dense models fall back to the full footprint.
     pub fn moe_resident_gb(&self, quant: Quant, context: u32) -> f64 {
         let active = self.active_weights_gb(quant);
-        active + self.kv_cache_gb(context) + self.overhead_gb(active)
+        active + self.kv_cache_gb(context) + Model::overhead_gb(active)
     }
 
     /// Substring match over name, id, provider, use case and parameter size.

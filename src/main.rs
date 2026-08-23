@@ -461,18 +461,18 @@ fn resolve_runtime(cli: &Cli) -> Result<Option<RuntimeKind>, String> {
 /// An explicit `--force-runtime` wins. Otherwise the first runtime actually
 /// running on the machine, and failing that the one most likely to be
 /// installed for this model: Ollama when it has a tag, llama.cpp otherwise.
-fn suggested_runtime(forced: Option<RuntimeKind>, result: &FitResult) -> Option<RuntimeKind> {
+fn suggested_runtime(forced: Option<RuntimeKind>, result: &FitResult) -> RuntimeKind {
     if let Some(kind) = forced {
-        return Some(kind);
+        return kind;
     }
     if let Some(live) = ProviderRegistry::new().discover().first() {
-        return Some(live.kind);
+        return live.kind;
     }
-    Some(if result.ollama.is_some() {
+    if result.ollama.is_some() {
         RuntimeKind::Ollama
     } else {
         RuntimeKind::LlamaCpp
-    })
+    }
 }
 
 /// The models a runtime can actually load.

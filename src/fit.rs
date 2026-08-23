@@ -615,7 +615,10 @@ fn quality_score(model: &Model, quant: Quant, target: UseCase) -> f64 {
         Some(active) => (model.params_b * active).sqrt(),
         None => model.params_b,
     };
-    let size = 100.0 * (1.0 + effective_params).ln() / (1.0 + QUALITY_SIZE_CEILING).ln();
+    // `ln_1p` rather than `(1.0 + x).ln()`: the latter loses precision for the
+    // sub-billion models at the bottom of the catalog, where `1.0 + x` rounds
+    // away most of the value being measured.
+    let size = 100.0 * effective_params.ln_1p() / QUALITY_SIZE_CEILING.ln_1p();
     let tier = 0.80 + f64::from(model.quality_tier.clamp(1, 5)) * 0.04;
     let score =
         size.min(100.0) * tier * quant.quality_factor() * use_case_affinity(model.use_case, target);
