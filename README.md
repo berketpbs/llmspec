@@ -19,12 +19,15 @@ bandwidth — before you spend it.
 ```
 $ llmspec fit -n 5
 #   Model                        Provider      Params Quant   Mode  Fit           Size  Mem%  Ctx  tok/s Score
-1   Qwen3 30B A3B Instruct 2507  Alibaba Qwen  30B/3B Q3_K_M  MoE   Good        13 GB   62%  32K   79.7  77.3
-2   GPT-OSS 20B                  OpenAI         21B/4B Q6_K   MoE   Good        16 GB   79%  64K   43.5  77.2
+1   Qwen3 30B A3B Instruct 2507  Alibaba Qwen  30B/3B Q3_K_M  MoE   Good        14 GB   62%  32K   79.7  77.3
+2   GPT-OSS 20B                  OpenAI        21B/4B Q6_K    MoE   Good        16 GB   79%  64K   43.5  77.2
 3   Qwen2.5 7B Instruct          Alibaba Qwen    7.6B Q4_K_M  GPU   Perfect    4.3 GB   83%  32K   34.9  76.8
-4   Qwen3 30B A3B                Alibaba Qwen  30B/3B Q3_K_M  MoE   Good        13 GB   62%  32K   79.7  75.3
+4   Qwen3 30B A3B                Alibaba Qwen  30B/3B Q3_K_M  MoE   Good        14 GB   62%  32K   79.7  75.3
 5   GLM-4 9B Chat                Zhipu AI        9.4B Q3_K_M  GPU   Marginal   4.3 GB   92%  32K   35.0  75.2
 ```
+
+*An 8 GB laptop GPU. Nothing here needs to be downloaded twice to find out it
+does not fit.*
 
 ## Contents
 
