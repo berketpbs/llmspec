@@ -182,15 +182,22 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), String> {
     let hw = build_hardware(&cli)?;
-    let db = ModelDb::embedded();
+    let db = ModelDb::load();
+    let stored = Config::load();
+    // An explicit `--use-case` beats the stored preference, which beats the
+    // built-in default.
     let target = match &cli.use_case {
         Some(raw) => UseCase::parse(raw)
             .ok_or_else(|| format!("unknown use case '{raw}' (try: general, coding, reasoning, chat, multimodal, embedding)"))?,
-        None => UseCase::General,
+        None => stored.use_case,
     };
+    let runtime = resolve_runtime(&cli)?;
     let cfg = SpeedConfig {
         context_cap: resolve_context_cap(&cli),
-        ..SpeedConfig::default()
+        // A forced runtime shifts the throughput estimate: MLX and vLLM read
+        // the same weights faster than a GGUF loader does.
+        gpu_factor: stored.speed.gpu_factor * runtime.map_or(1.0, RuntimeKind::speed_factor),
+        ..stored.speed.apply_to(&SpeedConfig::default())
     };
 
     match &cli.command {
