@@ -217,7 +217,7 @@ fn render_system(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
 // Model table
 // ---------------------------------------------------------------------------
 
-fn render_table(frame: &mut Frame, area: Rect, app: &mut App, palette: &Palette) {
+fn render_table(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
     let header = Row::new(
         COLUMNS
             .iter()

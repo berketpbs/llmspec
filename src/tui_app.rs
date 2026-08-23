@@ -725,7 +725,7 @@ impl App {
             let name = self
                 .selected_result()
                 .map(|r| r.name.clone())
-                .unwrap_or(id.clone());
+                .unwrap_or_else(|| id.clone());
             self.marked_model_id = Some(id);
             self.status = format!("marked {name} — press c to compare");
         }

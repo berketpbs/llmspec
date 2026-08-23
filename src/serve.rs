@@ -52,7 +52,7 @@ impl Server {
         let bound = listener
             .local_addr()
             .map(|a| a.to_string())
-            .unwrap_or(addr.clone());
+            .unwrap_or_else(|_| addr.clone());
 
         eprintln!("llmspec API listening on http://{bound}");
         for route in ROUTES {
@@ -116,7 +116,7 @@ impl Server {
         }
     }
 
-    fn models(&mut self, request: &Request) -> (u16, String) {
+    fn models(&self, request: &Request) -> (u16, String) {
         let target = match request.use_case(self.default_use_case) {
             Ok(target) => target,
             Err(e) => return (400, error_json(&e)),
@@ -221,7 +221,7 @@ impl Server {
         )
     }
 
-    fn one_model(&mut self, id: &str, request: &Request) -> (u16, String) {
+    fn one_model(&self, id: &str, request: &Request) -> (u16, String) {
         let query = percent_decode(id);
         let Some(model) = self.db.find(&query) else {
             return (404, error_json(&format!("no model matches '{query}'")));
