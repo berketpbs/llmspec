@@ -587,10 +587,25 @@ pub fn render_bench(report: &BenchReport) -> String {
         ));
     }
 
-    if report.results.iter().any(|r| r.estimated_tps.is_some()) {
+    // A ratio on its own is not actionable. Saying what the estimate assumed
+    // lets the reader see whether the runtime loaded something else entirely.
+    let assumptions: Vec<&crate::bench::Assumptions> =
+        report.results.iter().filter_map(|r| r.assumed.as_ref()).collect();
+    if !assumptions.is_empty() {
+        out.push_str(&format!("\n{}\n", "What the estimate assumed".bold()));
+        for assumed in assumptions {
+            out.push_str(&format!(
+                "  {} at {}, {} context, {} of weights read per token\n",
+                assumed.catalog_id.bright_black(),
+                assumed.quantization,
+                format_context(assumed.context),
+                format_size_gb(assumed.weights_gb),
+            ));
+        }
         out.push_str(&format!(
-            "\n  {}\n",
-            "vs est. is measured / estimated; 1.00x means the model predicted this machine exactly."
+            "  {}\n",
+            "A ratio far from 1.00x usually means the runtime loaded a different \
+             quantization than the one assumed here."
                 .bright_black()
         ));
     }
