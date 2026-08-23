@@ -1,8 +1,12 @@
 # llmspec Testing & Validation Report
 
-**Date:** 2026-08-18  
-**Status:** ✅ Production Ready  
-**Test Results:** 52/52 passing
+**Date:** 2026-08-23 (revised)
+**Status:** ✅ Production Ready
+**Test Results:** 107/107 passing
+
+> Sections 1–4 and 6–8 describe the 2026-08-18 state and its 95-model catalog.
+> Sections 5 and 9 have been corrected — the original parity claim against
+> llmfit was wrong. See [docs/LLMFIT_COMPARISON.md](docs/LLMFIT_COMPARISON.md).
 
 ---
 
@@ -146,23 +150,15 @@ Status:   ✅ CORRECT (graceful degradation)
 
 ## 5. Comparison vs llmfit
 
-| Feature | llmspec | llmfit | Parity |
-|---------|---------|--------|--------|
-| Models | 95 | 100+ | 95% |
-| Hardware Detection | Full | Full | ✅ |
-| Fit Analysis | 4D scoring | 4D scoring | ✅ |
-| TUI | 70% features | 100% features | 70% |
-| CLI | 6 commands | 6+ commands | ✅ |
-| JSON output | Yes | Yes | ✅ |
-| Config overrides | Yes | Yes | ✅ |
-| Quantization | Dynamic | Dynamic | ✅ |
-| MoE support | Yes | Yes | ✅ |
-| **Missing** | REST API | REST API | ⚠️  |
-| **Missing** | Install script | Install script | ⚠️  |
-| **Missing** | Filter popups | Filter popups | ⚠️  |
-| **Quality** | Production | Production | ✅ |
+See [docs/LLMFIT_COMPARISON.md](docs/LLMFIT_COMPARISON.md) for the current,
+itemised comparison.
 
-**Key Gap:** REST API (can be added post-release)
+The earlier revision of this report claimed "95% feature parity" against a
+llmfit with "100+ models". Both figures were wrong: llmfit ships roughly 497
+models across ~133 providers, plus a benchmark leaderboard, an MCP server, a
+web UI, a desktop app and a Python package. The comparison document states
+which of those gaps are closed, which are deliberate scope calls, and which
+remain open.
 
 ---
 
@@ -204,12 +200,23 @@ Dependencies:           ✅ Minimal, well-known crates
 
 ## 9. Known Limitations
 
-1. **Model Count:** 95 models (good but llmfit has 100+)
-2. **AMD GPU Windows:** rocm-smi not available on Windows
-3. **No REST API:** Can't query from other services
-4. **No Persistence:** Theme/config not saved between sessions
-5. **No Inference Bench:** Can't run actual speed tests
-6. **No Download Manager:** Basic Ollama pull only
+Resolved since the first revision of this report:
+
+- ~~AMD GPU Windows~~ — read from the display driver's registry key
+- ~~No REST API~~ — `llmspec serve`
+- ~~No persistence~~ — theme, use case and speed factors in `config.json`
+- ~~No inference bench~~ — `llmspec bench`
+- ~~Ollama only~~ — llama.cpp, LM Studio, vLLM, Docker Model Runner, MLX
+
+Still open:
+
+1. **Model count:** 240 models against llmfit's ~497
+2. **No community benchmark data:** speed estimates are pure bandwidth model,
+   not calibrated against measured community results
+3. **Quality scores are heuristic:** effective parameter count × family tier ×
+   quantization penalty, not derived from task benchmarks
+4. **No download manager:** Ollama pull only, with no progress or delete
+5. **Single distribution channel:** `cargo install`, no packaged installs
 
 ---
 
@@ -229,7 +236,10 @@ Dependencies:           ✅ Minimal, well-known crates
 3. Add filter popups for advanced discovery
 4. Build install script for wider distribution
 
-**Recommendation:** Deploy as-is, iterate on remaining features based on user feedback.
+**Recommendation:** Deploy as-is, iterate on remaining features based on user
+feedback. Note that the "95% feature parity with llmfit" line above dates from
+the first revision and is not accurate; section 5 and the comparison document
+carry the corrected picture.
 
 ---
 
