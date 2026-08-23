@@ -953,7 +953,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "colored",
- "crossterm",
  "ratatui",
  "serde",
  "serde_json",
