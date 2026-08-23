@@ -13,9 +13,17 @@ rust-version = "1.85"
 [dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
 colored = "3.1.1"
-crossterm = "0.29.0"
+# crossterm is not listed: ratatui re-exports the parts the event loop needs,
+# and depending on it directly risks compiling two incompatible versions.
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sysinfo = "0.39.6"
 ureq = { version = "3.4.0", features = ["json"] }
+
+[profile.release]
+# The analysis runs over the whole catalog on every keystroke in the TUI, so
+# cross-crate inlining is worth the longer build.
+lto = "thin"
+codegen-units = 1
+strip = true
