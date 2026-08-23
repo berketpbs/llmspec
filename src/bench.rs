@@ -44,6 +44,22 @@ pub struct BenchResult {
     pub estimated_tps: Option<f64>,
     /// Measured / estimated. Above 1.0 means the estimate was conservative.
     pub estimate_ratio: Option<f64>,
+    /// What the prediction assumed, so a divergence can be traced.
+    ///
+    /// The estimate is only as good as its inputs: if the runtime loaded a
+    /// different quantization than llmspec placed the model at, the two
+    /// numbers describe different things and the ratio is meaningless.
+    pub assumed: Option<Assumptions>,
+}
+
+/// The configuration the estimate was made for.
+#[derive(Debug, Clone, Serialize)]
+pub struct Assumptions {
+    pub catalog_id: String,
+    pub quantization: &'static str,
+    pub context: u32,
+    /// Weight bytes the speed model assumed are read per token.
+    pub weights_gb: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -146,15 +162,23 @@ fn summarize(model_ref: &str, kind: RuntimeKind, samples: &[Sample]) -> BenchRes
         prompt_tokens: last.map(|s| s.prompt_tokens).unwrap_or(0),
         estimated_tps: None,
         estimate_ratio: None,
+        assumed: None,
     }
 }
 
 /// Attach llmspec's own prediction so the two can be compared.
-pub fn attach_estimate(result: &mut BenchResult, estimated_tps: f64) {
-    result.estimated_tps = Some(estimated_tps);
-    if estimated_tps > 0.0 {
-        result.estimate_ratio = Some(result.tokens_per_second / estimated_tps);
+pub fn attach_estimate(result: &mut BenchResult, analysis: &FitResult, weights_gb: f64) {
+    let estimated = analysis.tokens_per_second;
+    result.estimated_tps = Some(estimated);
+    if estimated > 0.0 {
+        result.estimate_ratio = Some(result.tokens_per_second / estimated);
     }
+    result.assumed = Some(Assumptions {
+        catalog_id: analysis.model_id.clone(),
+        quantization: analysis.quant.label(),
+        context: analysis.context,
+        weights_gb,
+    });
 }
 
 /// Median of an already-sorted slice.
