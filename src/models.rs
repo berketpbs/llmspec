@@ -420,6 +420,60 @@ mod tests {
     }
 
     #[test]
+    fn every_model_id_is_unique() {
+        let db = db();
+        let mut ids: Vec<&str> = db.models.iter().map(|m| m.id.as_str()).collect();
+        ids.sort_unstable();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "the catalog has a duplicate id");
+    }
+
+    #[test]
+    fn no_two_models_claim_the_same_runtime_tag() {
+        // A shared tag means `d` downloads a different model than the one on
+        // screen, so this is a correctness constraint rather than tidiness.
+        let db = db();
+        let mut tags: Vec<&str> = db.models.iter().filter_map(|m| m.ollama.as_deref()).collect();
+        tags.sort_unstable();
+        let mut seen = None;
+        for tag in tags {
+            assert_ne!(Some(tag), seen, "two models claim the Ollama tag '{tag}'");
+            seen = Some(tag);
+        }
+    }
+
+    #[test]
+    fn catalog_entries_are_internally_consistent() {
+        for model in db().models {
+            let id = &model.id;
+            assert!(model.params_b > 0.0, "{id} has no parameter count");
+            assert!(model.context_length >= 512, "{id} has an implausible context");
+            assert!(
+                (1..=5).contains(&model.quality_tier),
+                "{id} has an out-of-range quality tier"
+            );
+            if let Some(active) = model.active_params_b {
+                assert!(
+                    active > 0.0 && active < model.params_b,
+                    "{id}: MoE active parameters must be a fraction of the total"
+                );
+            }
+            // Partial geometry would be silently ignored by the KV estimate,
+            // so it is either all present or all absent.
+            let geometry = [
+                model.layers.is_some(),
+                model.kv_heads.is_some(),
+                model.head_dim.is_some(),
+            ];
+            assert!(
+                geometry.iter().all(|&p| p) || !geometry.iter().any(|&p| p),
+                "{id} has partial KV geometry, which would be ignored"
+            );
+        }
+    }
+
+    #[test]
     fn provider_count_deduplicates() {
         let db = db();
         assert!(db.provider_count() > 1);

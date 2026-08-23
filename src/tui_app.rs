@@ -917,7 +917,13 @@ pub(crate) mod tests {
             .expect("catalog has ollama tags");
         app.discovery.installed.insert(&tag);
         app.refilter();
-        assert_eq!(app.visible.len(), 1);
+        assert!(!app.visible.is_empty());
+        assert!(
+            app.visible
+                .iter()
+                .all(|&i| app.is_installed(&app.results[i])),
+            "the installed filter let through a model that is not installed"
+        );
     }
 
     #[test]
