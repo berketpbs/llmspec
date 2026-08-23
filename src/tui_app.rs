@@ -1169,16 +1169,37 @@ mod tests {
     fn a_discovery_result_updates_the_installed_set() {
         let mut app = test_app();
         app.refreshing = true;
-        let mut index = InstalledIndex::default();
-        index.insert("qwen2.5:7b");
-        index.insert("phi-4");
+        let mut installed = InstalledIndex::default();
+        installed.insert("qwen2.5:7b");
+        installed.insert("phi-4");
         app.events_tx
-            .send(BackgroundEvent::InstalledRefreshed(Ok(index)))
+            .send(BackgroundEvent::Discovered(Ok(Discovery {
+                installed,
+                runtimes: vec![DiscoveredRuntime {
+                    kind: RuntimeKind::Ollama,
+                    name: RuntimeKind::Ollama.label(),
+                    base_url: "http://127.0.0.1:11434".into(),
+                    model_count: 2,
+                    disk_gb: Some(9.0),
+                }],
+            })))
             .unwrap();
         app.poll_events();
         assert_eq!(app.discovery.installed.len(), 2);
-        assert!(app.status.contains('2'));
+        assert_eq!(app.discovery.runtimes.len(), 1);
+        assert!(app.status.contains("Ollama"), "{}", app.status);
         assert!(!app.refreshing, "the refresh slot is released");
+    }
+
+    #[test]
+    fn discovery_with_no_runtime_says_so() {
+        let mut app = test_app();
+        app.refreshing = true;
+        app.events_tx
+            .send(BackgroundEvent::Discovered(Ok(Discovery::default())))
+            .unwrap();
+        app.poll_events();
+        assert!(app.status.contains("no local runtime"), "{}", app.status);
     }
 
     #[test]
@@ -1187,11 +1208,60 @@ mod tests {
         app.discovery.installed.insert("qwen2.5:7b");
         app.refreshing = true;
         app.events_tx
-            .send(BackgroundEvent::InstalledRefreshed(Err("no runtime".into())))
+            .send(BackgroundEvent::Discovered(Err("no runtime".into())))
             .unwrap();
         app.poll_events();
         assert_eq!(app.discovery.installed.len(), 1, "known models are not lost");
         assert!(app.status.contains("no runtime"));
+    }
+
+    #[test]
+    fn suggested_commands_follow_the_running_runtime() {
+        let mut app = test_app();
+        let result = app.results[0].clone();
+
+        // With nothing running, a tagged model gets Ollama.
+        let tagged = app
+            .results
+            .iter()
+            .find(|r| r.ollama.is_some())
+            .expect("catalog has tagged models")
+            .clone();
+        assert_eq!(app.suggested_runtime(&tagged), RuntimeKind::Ollama);
+        let (kind, install, run) = app.commands_for(&tagged).expect("a tagged model has commands");
+        assert_eq!(kind, RuntimeKind::Ollama);
+        assert!(install.starts_with("ollama pull"));
+        assert!(run.starts_with("ollama run"));
+
+        // A live runtime wins over the fallback.
+        app.discovery.runtimes = vec![DiscoveredRuntime {
+            kind: RuntimeKind::Vllm,
+            name: RuntimeKind::Vllm.label(),
+            base_url: "http://127.0.0.1:8000".into(),
+            model_count: 0,
+            disk_gb: None,
+        }];
+        assert_eq!(app.suggested_runtime(&result), RuntimeKind::Vllm);
+        let (_, install, _) = app.commands_for(&result).unwrap();
+        assert!(install.contains(&result.model_id), "{install}");
+    }
+
+    #[test]
+    fn a_registry_runtime_without_a_tag_has_no_command_to_offer() {
+        let mut app = test_app();
+        // Ollama cannot be handed an upstream repo id, so an untagged model
+        // yields no command rather than a wrong one.
+        app.discovery.runtimes = vec![DiscoveredRuntime {
+            kind: RuntimeKind::Ollama,
+            name: RuntimeKind::Ollama.label(),
+            base_url: "http://127.0.0.1:11434".into(),
+            model_count: 0,
+            disk_gb: None,
+        }];
+        let untagged = app.results.iter().find(|r| r.ollama.is_none()).cloned();
+        if let Some(result) = untagged {
+            assert!(app.commands_for(&result).is_none());
+        }
     }
 
     #[test]
