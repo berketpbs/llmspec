@@ -593,7 +593,7 @@ impl App {
                     self.download_tag = None;
                     match result {
                         Ok(()) => {
-                            self.installed.insert(&tag);
+                            self.discovery.installed.insert(&tag);
                             self.status = format!("pulled {tag}");
                             // An install can change what the availability
                             // filter shows.
@@ -610,10 +610,10 @@ impl App {
                             self.status = match (discovery.runtimes.len(), count) {
                                 (0, _) => "no local runtime is running".to_string(),
                                 (_, 0) => {
-                                    format!("{} running, no models installed", self.runtime_names(&discovery))
+                                    format!("{} running, no models installed", Self::runtime_names(&discovery))
                                 }
                                 (_, n) => {
-                                    format!("{} — {n} model(s) installed", self.runtime_names(&discovery))
+                                    format!("{} — {n} model(s) installed", Self::runtime_names(&discovery))
                                 }
                             };
                             self.discovery = discovery;
