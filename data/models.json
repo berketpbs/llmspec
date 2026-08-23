@@ -584,7 +584,7 @@
       "context_length": 32768,
       "use_case": "coding",
       "license": "apache-2.0",
-      "released": "2024-11",
+      "released": "2024-09",
       "capabilities": [
         "tools",
         "fim"

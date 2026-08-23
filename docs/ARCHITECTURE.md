@@ -268,12 +268,12 @@ composite = (Q·wq + S·ws + F·wf + C·wc) × usability
 
 | Use case | Quality | Speed | Fit | Context |
 |---|---|---|---|---|
-| General | 0.40 | 0.25 | 0.20 | 0.15 |
-| Coding | 0.35 | 0.20 | 0.15 | 0.30 |
-| Reasoning | 0.55 | 0.15 | 0.15 | 0.15 |
-| Chat | 0.30 | 0.35 | 0.20 | 0.15 |
-| Multimodal | 0.40 | 0.25 | 0.20 | 0.15 |
-| Embedding | 0.35 | 0.35 | 0.20 | 0.10 |
+| General | 0.50 | 0.25 | 0.10 | 0.15 |
+| Coding | 0.45 | 0.20 | 0.05 | 0.30 |
+| Reasoning | 0.65 | 0.15 | 0.05 | 0.15 |
+| Chat | 0.40 | 0.35 | 0.10 | 0.15 |
+| Multimodal | 0.50 | 0.25 | 0.10 | 0.15 |
+| Embedding | 0.45 | 0.35 | 0.10 | 0.10 |
 
 `usability` scales the whole thing towards zero below 3 tok/s. A placement
 that technically fits but produces a token every few seconds is not an answer,
