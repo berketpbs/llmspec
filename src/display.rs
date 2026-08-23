@@ -368,13 +368,19 @@ pub fn render_detail(result: &FitResult, model: &Model, runtime: Option<RuntimeK
     out
 }
 
-/// The name a runtime knows this model by, if it knows it at all.
+/// The name a runtime knows this model by, if it can load it at all.
+///
+/// Returns `None` rather than a command that would fail: a registry-backed
+/// runtime cannot be handed an upstream repository id, and a GGUF loader
+/// cannot open a model with no GGUF build.
 pub fn model_reference(result: &FitResult, kind: RuntimeKind) -> Option<String> {
     if kind.uses_own_registry() {
-        result.ollama.clone()
-    } else {
-        Some(result.model_id.clone())
+        return result.ollama.clone();
     }
+    if kind.needs_gguf() && !result.gguf {
+        return None;
+    }
+    Some(result.model_id.clone())
 }
 
 fn row(label: &str, value: &str) -> String {
