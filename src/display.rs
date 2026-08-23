@@ -400,7 +400,10 @@ pub fn render_plan(plan: &HardwarePlan) -> String {
     ));
 
     out.push_str(&format!("{}\n", "Storage".bold()));
-    out.push_str(&row("Weights", &format!("{} on disk", format_size_gb(plan.weights_gb))));
+    out.push_str(&row(
+        "Weights",
+        &format!("{} on disk", format_size_gb(plan.weights_gb)),
+    ));
     out.push_str(&row(
         "KV cache",
         &format!("{} at this context", format_size_gb(plan.kv_cache_gb)),
@@ -714,6 +717,31 @@ mod tests {
             model_reference(&result, RuntimeKind::Vllm).as_deref(),
             Some("Qwen/Qwen2.5-7B-Instruct")
         );
+    }
+
+    #[test]
+    fn the_plan_view_separates_disk_from_memory_and_names_the_quantization() {
+        use crate::fit::{SpeedConfig, plan};
+        use crate::models::{ModelDb, Quant};
+
+        let db = ModelDb::embedded();
+        let model = db.find("meta-llama/Llama-3.3-70B-Instruct").unwrap();
+        let plan = plan(model, Quant::Q4KM, 32_768, &SpeedConfig::default());
+        let out = render_plan(&plan);
+
+        // Debug formatting would print "Q4KM", which is not a quantization
+        // anyone would recognise.
+        assert!(out.contains("Q4_K_M"), "{out}");
+        assert!(!out.contains("Q4KM"), "{out}");
+        assert!(out.contains("Weights") && out.contains("KV cache"));
+        assert!(out.contains("Minimum VRAM") && out.contains("Minimum RAM"));
+        // Labels must not run into their values.
+        for line in out
+            .lines()
+            .filter(|l| l.starts_with("  ") && l.contains("GB"))
+        {
+            assert!(line.contains("   "), "label and value collided: {line:?}");
+        }
     }
 
     #[test]

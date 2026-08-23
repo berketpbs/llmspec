@@ -362,12 +362,40 @@ impl ModelDb {
         providers.len()
     }
 
+    /// Look a model up by id, name, runtime tag, or free text.
+    ///
+    /// Exact matches win over fuzzy ones so that a precise query is never
+    /// answered with a near miss.
     pub fn find(&self, query: &str) -> Option<&Model> {
         let q = query.trim().to_ascii_lowercase();
         self.models
             .iter()
-            .find(|m| m.id.to_ascii_lowercase() == q || m.name.to_ascii_lowercase() == q)
+            .find(|m| {
+                m.id.to_ascii_lowercase() == q
+                    || m.name.to_ascii_lowercase() == q
+                    || m.ollama.as_deref().map(str::to_ascii_lowercase) == Some(q.clone())
+            })
+            .or_else(|| self.find_for_runtime(&q))
             .or_else(|| self.models.iter().find(|m| m.matches(&q)))
+    }
+
+    /// Resolve a name a local runtime used back to its catalog entry.
+    ///
+    /// Runtimes rename models: Ollama calls it `qwen3:8b`, LM Studio
+    /// `qwen3-8b`, llama.cpp `Qwen3-8B-Q4_K_M.gguf`. Benchmarks arrive under
+    /// those names and have to be matched to a catalog entry before the
+    /// measurement can be compared with the estimate.
+    pub fn find_for_runtime(&self, reference: &str) -> Option<&Model> {
+        let wanted = crate::providers::normalize_model_name(reference);
+        if wanted.is_empty() {
+            return None;
+        }
+        self.models.iter().find(|m| {
+            m.ollama
+                .as_deref()
+                .is_some_and(|tag| crate::providers::normalize_model_name(tag) == wanted)
+                || crate::providers::normalize_model_name(&m.id) == wanted
+        })
     }
 }
 

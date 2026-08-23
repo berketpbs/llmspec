@@ -254,7 +254,7 @@ const FORMAT_SUFFIXES: &[&str] = &[
 /// `Qwen2.5-7B-Instruct-Q4_K_M.gguf` by llama.cpp. Dropping the publisher
 /// prefix, the file extension and the quantization marker makes those three
 /// the same string.
-fn normalize_model_name(name: &str) -> String {
+pub fn normalize_model_name(name: &str) -> String {
     // Everything before the last slash is the publisher, which only one of
     // the runtimes reports.
     let tail = name.rsplit('/').next().unwrap_or(name);
