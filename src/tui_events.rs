@@ -447,7 +447,10 @@ mod tests {
     fn download_without_a_tag_explains_itself() {
         let mut app = test_app();
         // Point the cursor at a model with no Ollama tag, if the catalog has one.
-        let untagged = app.visible.iter().position(|&i| app.results[i].ollama.is_none());
+        let untagged = app
+            .visible
+            .iter()
+            .position(|&i| app.results[i].ollama.is_none());
         if let Some(row) = untagged {
             app.selected = row;
             press(&mut app, KeyCode::Char('d'));

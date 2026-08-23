@@ -166,6 +166,35 @@ impl Server {
                 None => return (400, error_json(&format!("unknown fit level '{raw}'"))),
             }
         }
+        // Practical thresholds, mirroring the `fit` subcommand's flags.
+        if let Some(raw) = request.get("min_tps") {
+            match raw.parse::<f64>() {
+                Ok(floor) => results.retain(|r| r.tokens_per_second >= floor),
+                Err(_) => return (400, error_json(&format!("min_tps '{raw}' is not a number"))),
+            }
+        }
+        if let Some(raw) = request.get("max_size_gb") {
+            match raw.parse::<f64>() {
+                Ok(ceiling) => results.retain(|r| r.download_gb <= ceiling),
+                Err(_) => {
+                    return (
+                        400,
+                        error_json(&format!("max_size_gb '{raw}' is not a number")),
+                    );
+                }
+            }
+        }
+        if let Some(raw) = request.get("min_context") {
+            match raw.parse::<u32>() {
+                Ok(floor) => results.retain(|r| r.context >= floor),
+                Err(_) => {
+                    return (
+                        400,
+                        error_json(&format!("min_context '{raw}' is not a number")),
+                    );
+                }
+            }
+        }
         if request.flag("perfect") {
             results.retain(|r| r.fit == FitLevel::Perfect);
         }
@@ -217,7 +246,8 @@ const ROUTES: &[&str] = &[
     "GET /system",
     "GET /runtimes",
     "GET /catalog",
-    "GET /models?limit&use_case&provider&search&quant&mode&min_fit&perfect&include_too_tight&max_context",
+    "GET /models?limit&use_case&provider&search&quant&mode&min_fit&perfect&include_too_tight",
+    "         &max_context&min_tps&max_size_gb&min_context",
     "GET /models/top",
     "GET /models/{id}",
 ];
@@ -565,5 +595,50 @@ mod tests {
         let (status, body) = server.route(&parse("GET /models?search=qwen&limit=3 HTTP/1.1\r\n"));
         assert_eq!(status, 200);
         assert!(body.contains("\"count\": 3"));
+    }
+
+    #[test]
+    fn practical_thresholds_filter_the_results() {
+        let mut server = test_server();
+        let (status, body) = server.route(&parse(
+            "GET /models?min_tps=20&max_size_gb=6&min_context=8192 HTTP/1.1\r\n",
+        ));
+        assert_eq!(status, 200);
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let models = parsed["models"].as_array().unwrap();
+        assert!(!models.is_empty(), "the thresholds excluded everything");
+        for model in models {
+            assert!(model["tokens_per_second"].as_f64().unwrap() >= 20.0);
+            assert!(model["download_gb"].as_f64().unwrap() <= 6.0);
+            assert!(model["context"].as_u64().unwrap() >= 8192);
+        }
+    }
+
+    #[test]
+    fn non_numeric_thresholds_are_400s() {
+        let mut server = test_server();
+        for query in ["min_tps=fast", "max_size_gb=big", "min_context=lots"] {
+            let (status, body) = server.route(&parse(&format!("GET /models?{query} HTTP/1.1\r\n")));
+            assert_eq!(status, 400, "{query} should be rejected");
+            assert!(body.contains("not a number"));
+        }
+    }
+
+    #[test]
+    fn every_advertised_route_answers() {
+        // A route listed in /health that 404s is worse than one not listed.
+        let mut server = test_server();
+        for path in [
+            "/health",
+            "/system",
+            "/runtimes",
+            "/catalog",
+            "/models",
+            "/models/top",
+        ] {
+            let (status, _) = server.route(&parse(&format!("GET {path} HTTP/1.1\r\n")));
+            assert_eq!(status, 200, "{path} did not answer");
+        }
     }
 }

@@ -145,7 +145,11 @@ mod tests {
         let mut f = form();
         assert_eq!(f.active(), 0);
         f.focus_prev();
-        assert_eq!(f.active(), 2, "moving up from the first field wraps to last");
+        assert_eq!(
+            f.active(),
+            2,
+            "moving up from the first field wraps to last"
+        );
         f.focus_next();
         assert_eq!(f.active(), 0);
         f.focus_next();

@@ -8,9 +8,7 @@ use crate::config::{Config, PersistedSpeed};
 use crate::fit::{self, FitLevel, FitResult, SpeedConfig};
 use crate::hardware::Hardware;
 use crate::models::{Model, ModelDb, UseCase};
-use crate::providers::{
-    DiscoveredRuntime, InstalledIndex, ProviderRegistry, Runtime, RuntimeKind,
-};
+use crate::providers::{DiscoveredRuntime, InstalledIndex, ProviderRegistry, Runtime, RuntimeKind};
 use crate::tui_form::{Field, Form};
 use crate::tui_theme::Theme;
 
@@ -614,10 +612,16 @@ impl App {
                             self.status = match (discovery.runtimes.len(), count) {
                                 (0, _) => "no local runtime is running".to_string(),
                                 (_, 0) => {
-                                    format!("{} running, no models installed", Self::runtime_names(&discovery))
+                                    format!(
+                                        "{} running, no models installed",
+                                        Self::runtime_names(&discovery)
+                                    )
                                 }
                                 (_, n) => {
-                                    format!("{} — {n} model(s) installed", Self::runtime_names(&discovery))
+                                    format!(
+                                        "{} — {n} model(s) installed",
+                                        Self::runtime_names(&discovery)
+                                    )
                                 }
                             };
                             self.discovery = discovery;
@@ -718,7 +722,10 @@ impl App {
             self.marked_model_id = None;
             self.status = "comparison mark cleared".to_string();
         } else {
-            let name = self.selected_result().map(|r| r.name.clone()).unwrap_or(id.clone());
+            let name = self
+                .selected_result()
+                .map(|r| r.name.clone())
+                .unwrap_or(id.clone());
             self.marked_model_id = Some(id);
             self.status = format!("marked {name} — press c to compare");
         }
@@ -1155,7 +1162,11 @@ pub(crate) mod tests {
             .unwrap();
         app.poll_events();
         assert!(app.download_tag.is_none());
-        assert!(app.discovery.installed.contains(Some("qwen2.5:7b"), "whatever/model"));
+        assert!(
+            app.discovery
+                .installed
+                .contains(Some("qwen2.5:7b"), "whatever/model")
+        );
         assert!(app.status.contains("pulled"));
     }
 
@@ -1220,7 +1231,11 @@ pub(crate) mod tests {
             .send(BackgroundEvent::Discovered(Err("no runtime".into())))
             .unwrap();
         app.poll_events();
-        assert_eq!(app.discovery.installed.len(), 1, "known models are not lost");
+        assert_eq!(
+            app.discovery.installed.len(),
+            1,
+            "known models are not lost"
+        );
         assert!(app.status.contains("no runtime"));
     }
 
@@ -1237,7 +1252,9 @@ pub(crate) mod tests {
             .expect("catalog has tagged models")
             .clone();
         assert_eq!(app.suggested_runtime(&tagged), RuntimeKind::Ollama);
-        let (kind, install, run) = app.commands_for(&tagged).expect("a tagged model has commands");
+        let (kind, install, run) = app
+            .commands_for(&tagged)
+            .expect("a tagged model has commands");
         assert_eq!(kind, RuntimeKind::Ollama);
         assert!(install.starts_with("ollama pull"));
         assert!(run.starts_with("ollama run"));

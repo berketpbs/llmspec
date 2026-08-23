@@ -947,7 +947,10 @@ mod tests {
     fn normalization_keeps_distinct_models_distinct() {
         // The dangerous failure is a false positive: telling the user a model
         // is on disk when only a relative of it is.
-        assert_ne!(normalize_model_name("phi-4"), normalize_model_name("phi-4-mini"));
+        assert_ne!(
+            normalize_model_name("phi-4"),
+            normalize_model_name("phi-4-mini")
+        );
         assert_ne!(
             normalize_model_name("Qwen/Qwen3-4B"),
             normalize_model_name("Qwen/Qwen3-8B")
@@ -1032,7 +1035,10 @@ mod tests {
         );
         // Every runtime must produce a non-empty command naming the model.
         for kind in RuntimeKind::ALL {
-            for command in [kind.install_command("some/model"), kind.run_command("some/model")] {
+            for command in [
+                kind.install_command("some/model"),
+                kind.run_command("some/model"),
+            ] {
                 assert!(command.contains("some/model"), "{}: {command}", kind.slug());
             }
         }

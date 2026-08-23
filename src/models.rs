@@ -434,7 +434,11 @@ mod tests {
         // A shared tag means `d` downloads a different model than the one on
         // screen, so this is a correctness constraint rather than tidiness.
         let db = db();
-        let mut tags: Vec<&str> = db.models.iter().filter_map(|m| m.ollama.as_deref()).collect();
+        let mut tags: Vec<&str> = db
+            .models
+            .iter()
+            .filter_map(|m| m.ollama.as_deref())
+            .collect();
         tags.sort_unstable();
         let mut seen = None;
         for tag in tags {

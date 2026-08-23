@@ -251,11 +251,7 @@ pub fn render_model_list(models: &[Model]) -> String {
 ///
 /// `runtime` is the local runtime whose commands should be suggested; passing
 /// `None` omits the "how to run it" section rather than guessing.
-pub fn render_detail(
-    result: &FitResult,
-    model: &Model,
-    runtime: Option<RuntimeKind>,
-) -> String {
+pub fn render_detail(result: &FitResult, model: &Model, runtime: Option<RuntimeKind>) -> String {
     let mut out = String::new();
     out.push_str(&format!("{}\n", result.name.bold().underline()));
     out.push_str(&format!("  {}\n\n", result.model_id.bright_black()));
@@ -616,5 +612,92 @@ mod tests {
         assert_eq!(format_context(131072), "128K");
         assert_eq!(format_context(8192), "8K");
         assert_eq!(format_context(512), "512");
+    }
+
+    #[test]
+    fn size_formatting_switches_units_where_a_person_would() {
+        assert_eq!(format_size_gb(0.4), "410 MB");
+        assert_eq!(format_size_gb(4.34), "4.3 GB");
+        assert_eq!(format_size_gb(43.4), "43 GB");
+        assert_eq!(format_size_gb(0.0), "0 MB");
+    }
+
+    #[test]
+    fn throughput_formatting_keeps_precision_where_it_matters() {
+        // Below ten tokens a second the second decimal is the difference
+        // between usable and not, so it is kept.
+        assert_eq!(format_tps(0.24), "0.24");
+        assert_eq!(format_tps(34.94), "34.9");
+        assert_eq!(format_tps(142.0), "142");
+    }
+
+    fn sample() -> (crate::models::ModelDb, FitResult) {
+        use crate::fit::{self, SpeedConfig};
+        use crate::hardware::Hardware;
+        use crate::models::{ModelDb, UseCase};
+
+        let db = ModelDb::embedded();
+        let mut hw = Hardware::detect();
+        hw.apply_overrides(Some(24.0), Some(64.0), None);
+        let model = db.find("Qwen/Qwen2.5-7B-Instruct").unwrap();
+        let result = fit::analyze(model, &hw, UseCase::General, &SpeedConfig::default());
+        (db.clone(), result)
+    }
+
+    #[test]
+    fn the_detail_view_answers_what_it_costs_and_how_to_run_it() {
+        let (db, result) = sample();
+        let model = db.find(&result.model_id).unwrap();
+        let out = render_detail(&result, model, Some(RuntimeKind::Ollama));
+
+        assert!(out.contains("Download size"), "{out}");
+        assert!(out.contains("Memory needed"));
+        assert!(out.contains("How to run it"));
+        assert!(out.contains("ollama pull qwen2.5:7b"), "{out}");
+        assert!(out.contains("ollama run qwen2.5:7b"));
+        assert!(out.contains("Composite"));
+    }
+
+    #[test]
+    fn the_detail_view_omits_commands_when_no_runtime_is_known() {
+        let (db, result) = sample();
+        let model = db.find(&result.model_id).unwrap();
+        let out = render_detail(&result, model, None);
+        assert!(!out.contains("How to run it"));
+        // The rest of the report is unaffected.
+        assert!(out.contains("Download size"));
+    }
+
+    #[test]
+    fn a_registry_runtime_without_a_tag_says_so_rather_than_guessing() {
+        let (db, mut result) = sample();
+        let model = db.find(&result.model_id).unwrap();
+        result.ollama = None;
+        let out = render_detail(&result, model, Some(RuntimeKind::Ollama));
+        assert!(out.contains("no packaged build"), "{out}");
+        assert!(!out.contains("ollama pull"), "a wrong command was printed");
+    }
+
+    #[test]
+    fn model_references_follow_the_runtime_convention() {
+        let (_, result) = sample();
+        // Registry-backed runtimes need their own tag...
+        assert_eq!(
+            model_reference(&result, RuntimeKind::Ollama).as_deref(),
+            Some("qwen2.5:7b")
+        );
+        // ...everything else takes the upstream repository id.
+        assert_eq!(
+            model_reference(&result, RuntimeKind::Vllm).as_deref(),
+            Some("Qwen/Qwen2.5-7B-Instruct")
+        );
+    }
+
+    #[test]
+    fn the_table_reports_download_size() {
+        let (_, result) = sample();
+        let out = render_table(std::slice::from_ref(&result));
+        assert!(out.contains("Size"), "{out}");
+        assert!(out.contains(&format_size_gb(result.download_gb)), "{out}");
     }
 }

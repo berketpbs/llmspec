@@ -63,12 +63,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     match app.mode {
         Mode::Help => render_help(frame, frame.area(), &palette),
-        Mode::SimulateHardware => {
-            render_form(frame, frame.area(), &app.simulation, " Simulate hardware ", &palette)
-        }
-        Mode::AdvancedConfig => {
-            render_form(frame, frame.area(), &app.speed_form, " Speed model ", &palette)
-        }
+        Mode::SimulateHardware => render_form(
+            frame,
+            frame.area(),
+            &app.simulation,
+            " Simulate hardware ",
+            &palette,
+        ),
+        Mode::AdvancedConfig => render_form(
+            frame,
+            frame.area(),
+            &app.speed_form,
+            " Speed model ",
+            &palette,
+        ),
         _ => {}
     }
 }
@@ -108,7 +116,10 @@ fn label(text: &str, palette: &Palette) -> Span<'static> {
 /// A bordered block in the theme's colours.
 fn panel_block(title: &str, palette: &Palette) -> Block<'static> {
     Block::bordered()
-        .title(Span::styled(title.to_string(), Style::new().fg(palette.accent)))
+        .title(Span::styled(
+            title.to_string(),
+            Style::new().fg(palette.accent),
+        ))
         .border_style(dim(palette))
 }
 
@@ -186,10 +197,7 @@ fn render_system(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
             label("Backend", palette),
             Span::styled(hw.backend.label(), Style::new().bold()),
             Span::styled("   use case ", dim(palette)),
-            Span::styled(
-                app.target.as_str(),
-                Style::new().fg(palette.accent).bold(),
-            ),
+            Span::styled(app.target.as_str(), Style::new().fg(palette.accent).bold()),
             Span::styled("   runtimes ", dim(palette)),
             runtimes,
         ]),
@@ -329,7 +337,10 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
         Line::from(vec![label("Context", palette), context]),
         Line::from(vec![
             label("Throughput", palette),
-            Span::raw(format!("~{} tok/s estimated", format_tps(r.tokens_per_second))),
+            Span::raw(format!(
+                "~{} tok/s estimated",
+                format_tps(r.tokens_per_second)
+            )),
             Span::styled("   verify with ", dim(palette)),
             Span::styled("llmspec bench", Style::new().fg(palette.accent)),
         ]),
@@ -374,7 +385,9 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
 
 fn score_bar(name: &str, score: f64, palette: &Palette) -> Line<'static> {
     const WIDTH: usize = 30;
-    let filled = ((score / 100.0) * WIDTH as f64).round().clamp(0.0, WIDTH as f64) as usize;
+    let filled = ((score / 100.0) * WIDTH as f64)
+        .round()
+        .clamp(0.0, WIDTH as f64) as usize;
     Line::from(vec![
         label(name, palette),
         Span::styled("█".repeat(filled), Style::new().fg(palette.score(score))),
@@ -398,7 +411,10 @@ fn render_plan(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
 
     let text = vec![
         Line::from(vec![
-            Span::styled(plan.model_name.clone(), Style::new().fg(palette.accent).bold()),
+            Span::styled(
+                plan.model_name.clone(),
+                Style::new().fg(palette.accent).bold(),
+            ),
             Span::styled(
                 format!(
                     "  {} at {}, {} context",
@@ -519,8 +535,14 @@ fn render_comparison(frame: &mut Frame, area: Rect, app: &App, palette: &Palette
     let mut text = vec![
         Line::from(vec![
             Span::styled(format!("{:<12}", ""), dim(palette)),
-            Span::styled(format!("{:<28}", truncate(&marked.name, 27)), Style::new().bold()),
-            Span::styled(truncate(&selected.name, 27), Style::new().fg(palette.accent).bold()),
+            Span::styled(
+                format!("{:<28}", truncate(&marked.name, 27)),
+                Style::new().bold(),
+            ),
+            Span::styled(
+                truncate(&selected.name, 27),
+                Style::new().fg(palette.accent).bold(),
+            ),
         ]),
         Line::from(vec![
             Span::styled(format!("{:<12}", ""), dim(palette)),
@@ -555,7 +577,10 @@ fn truncate(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         return text.to_string();
     }
-    text.chars().take(width.saturating_sub(1)).chain(['…']).collect()
+    text.chars()
+        .take(width.saturating_sub(1))
+        .chain(['…'])
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -563,8 +588,7 @@ fn truncate(text: &str, width: usize) -> String {
 // ---------------------------------------------------------------------------
 
 /// Keys advertised in the status bar. The full list lives in the help popup.
-const STATUS_HINT: &str =
-    " j/k move · / search · f fit · a show · s sort · u use case · d download · Enter detail · h help · q quit";
+const STATUS_HINT: &str = " j/k move · / search · f fit · a show · s sort · u use case · d download · Enter detail · h help · q quit";
 
 fn render_status(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
     let line = if app.mode == Mode::Search {
@@ -618,8 +642,14 @@ const HELP: &[(Option<&str>, &str)] = &[
     (None, "Narrowing the list"),
     (Some("/"), "search by name, provider, size or capability"),
     (Some("Ctrl-U"), "clear the search (while searching)"),
-    (Some("f"), "fit filter: all, runnable, perfect, good, marginal"),
-    (Some("a"), "show: all models, GGUF builds, already installed"),
+    (
+        Some("f"),
+        "fit filter: all, runnable, perfect, good, marginal",
+    ),
+    (
+        Some("a"),
+        "show: all models, GGUF builds, already installed",
+    ),
     (Some("s"), "sort column"),
     (Some("u"), "target use case, and re-rank for it"),
     (None, "Inspecting a model"),
@@ -688,7 +718,9 @@ fn render_form(frame: &mut Frame, area: Rect, form: &Form, title: &str, palette:
             Span::styled(
                 format!("{:<10}", field.value),
                 if active {
-                    Style::new().fg(palette.accent).add_modifier(Modifier::UNDERLINED)
+                    Style::new()
+                        .fg(palette.accent)
+                        .add_modifier(Modifier::UNDERLINED)
                 } else {
                     Style::new()
                 },
@@ -943,11 +975,7 @@ mod tests {
         for theme in Theme::ALL {
             app.theme = theme;
             let out = screen(&mut app, 150, 44);
-            assert!(
-                out.contains("llmspec"),
-                "{} failed to render",
-                theme.name()
-            );
+            assert!(out.contains("llmspec"), "{} failed to render", theme.name());
         }
     }
 

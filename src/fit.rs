@@ -792,7 +792,12 @@ mod tests {
     fn download_size_is_the_weights_alone() {
         let db = ModelDb::embedded();
         let m = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
-        let r = analyze(m, &hw(24.0, 64.0), UseCase::General, &SpeedConfig::default());
+        let r = analyze(
+            m,
+            &hw(24.0, 64.0),
+            UseCase::General,
+            &SpeedConfig::default(),
+        );
         // The download is the weight file; the KV cache and runtime overhead
         // only exist once the model is loaded, so they must not be counted.
         assert!((r.download_gb - m.weights_gb(r.quant)).abs() < 1e-9);

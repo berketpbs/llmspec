@@ -251,7 +251,11 @@ mod tests {
         assert_eq!(theme, Theme::Default, "cycling wraps");
         assert_eq!(seen.len(), Theme::ALL.len());
         for candidate in Theme::ALL {
-            assert!(seen.contains(&candidate), "{} was skipped", candidate.name());
+            assert!(
+                seen.contains(&candidate),
+                "{} was skipped",
+                candidate.name()
+            );
         }
     }
 
