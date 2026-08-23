@@ -261,7 +261,11 @@ fn run(cli: Cli) -> Result<(), String> {
             } else {
                 print!(
                     "{}",
-                    display::render_detail(&result, found, suggested_runtime(runtime, &result))
+                    display::render_detail(
+                        &result,
+                        found,
+                        Some(suggested_runtime(runtime, &result))
+                    )
                 );
             }
         }
