@@ -6,6 +6,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Built with Ratatui](https://ratatui.rs/built-with-ratatui/badge.svg)](https://ratatui.rs/)
 
 <img src="docs/demo.gif" alt="llmspec ranking the model catalog against the detected hardware" width="900">
 
@@ -106,6 +107,11 @@ llmspec plan "Llama-3.1-8B" --target-tps 60
 Running `llmspec` with no arguments opens the full interface: every model,
 ranked, filterable, with a detail panel that tells you the exact command to
 run the one you picked.
+
+It is built with [Ratatui](https://ratatui.rs/) — the ten themes, the
+comparison and planning panels, and the mouse-aware status bar are all its
+widgets. `crossterm` comes in through Ratatui's re-export rather than as a
+second dependency, so the two cannot drift onto incompatible versions.
 
 ```
 ┌ llmspec ─────────────────────────────────────────────────────────────────┐
@@ -500,10 +506,10 @@ ranking under every sort order, runtime response parsing for both API shapes,
 HTTP routing and error statuses, config round-tripping, key handling, and TUI
 rendering — including cramped terminals, empty result sets and every theme.
 
-Dependencies: `clap`, `colored`, `ratatui`, `serde`, `serde_json`, `sysinfo`,
-`ureq`. `crossterm` is reached through `ratatui`'s re-export rather than
-declared directly, so the two cannot drift onto incompatible versions. No
-unsafe code.
+Dependencies: `clap`, `colored`, [`ratatui`](https://ratatui.rs/), `serde`,
+`serde_json`, `sysinfo`, `ureq`. `crossterm` is reached through `ratatui`'s
+re-export rather than declared directly, so the two cannot drift onto
+incompatible versions. No unsafe code.
 
 ---
 
