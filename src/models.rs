@@ -558,6 +558,57 @@ mod tests {
     }
 
     #[test]
+    fn an_exact_query_resolves_even_when_others_would_also_match() {
+        let db = ModelDb::embedded();
+        // "Qwen/Qwen3-8B" is a substring of nothing else, but plenty of models
+        // would match it fuzzily. An exact id must never be reported as
+        // ambiguous.
+        let id = "meta-llama/Llama-3.1-8B-Instruct";
+        assert!(matches!(db.resolve(id), Lookup::Found(m) if m.id == id));
+        // The same holds for a runtime tag.
+        assert!(matches!(db.resolve("deepseek-r1:7b"), Lookup::Found(_)));
+    }
+
+    #[test]
+    fn a_broad_query_is_reported_as_ambiguous_rather_than_guessed() {
+        let db = ModelDb::embedded();
+        let Lookup::Ambiguous(candidates) = db.resolve("llama") else {
+            panic!("'llama' matches many models and none of them exactly");
+        };
+        assert!(
+            candidates.len() > 1,
+            "an ambiguous result must carry every candidate"
+        );
+        // Every candidate really does match, so the list is worth printing.
+        assert!(candidates.iter().all(|m| m.matches("llama")));
+    }
+
+    #[test]
+    fn a_query_matching_one_model_is_not_ambiguous() {
+        let db = ModelDb::embedded();
+        assert!(matches!(
+            db.resolve("Qwen3-Embedding-0.6B"),
+            Lookup::Found(_)
+        ));
+    }
+
+    #[test]
+    fn nothing_matching_is_still_nothing() {
+        let db = ModelDb::embedded();
+        assert!(matches!(db.resolve("no such model here"), Lookup::NotFound));
+        assert!(matches!(db.resolve("   "), Lookup::NotFound));
+    }
+
+    #[test]
+    fn find_keeps_taking_the_first_candidate() {
+        // `find` is what the HTTP route and the tests use, where the caller
+        // already holds an identifier; it must not start refusing to answer.
+        let db = ModelDb::embedded();
+        assert!(db.find("llama").is_some());
+        assert!(db.find("no such model here").is_none());
+    }
+
+    #[test]
     fn embedded_database_loads() {
         let db = db();
         assert!(
