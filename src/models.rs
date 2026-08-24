@@ -661,6 +661,22 @@ mod tests {
                 geometry.iter().all(|&p| p) || !geometry.iter().any(|&p| p),
                 "{id} has partial KV geometry, which would be ignored"
             );
+
+            // The key and value projections are cut out of the residual
+            // stream, so grouped-query attention can only ever be narrower
+            // than it -- equality is the multi-head case. A `kv_heads` copied
+            // from the attention head count of a model that actually uses
+            // GQA, or a head_dim and kv_heads swapped, breaks this and would
+            // otherwise show up only as a quietly oversized KV cache.
+            if let (Some(kv_heads), Some(head_dim), Some(hidden)) =
+                (model.kv_heads, model.head_dim, model.hidden_size)
+            {
+                assert!(
+                    kv_heads * head_dim <= hidden,
+                    "{id}: kv_heads x head_dim ({kv_heads} x {head_dim}) exceeds \
+                     hidden_size ({hidden})"
+                );
+            }
         }
     }
 
