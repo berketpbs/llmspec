@@ -271,7 +271,12 @@ impl Model {
                     * KV_ELEMENT_BYTES
                     / BYTES_PER_GB
             }
-            _ => f64::from(context) * self.params_b * KV_FALLBACK_GB_PER_TOKEN_PER_B,
+            // The fallback scales with the *active* parameter count, not the
+            // total. A KV cache is sized by the attention layers, and an MoE
+            // model's extra experts add none — keying off `params_b` charged
+            // DeepSeek-V3 89 GB against a real 1.9 GB. For a dense model
+            // `active_params` is `params_b`, so nothing changes there.
+            _ => f64::from(context) * self.active_params() * KV_FALLBACK_GB_PER_TOKEN_PER_B,
         }
     }
 
@@ -513,6 +518,31 @@ mod tests {
         let m = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
         // 2 * 32 layers * 8 kv heads * 128 head dim * 8192 tokens * 2 bytes = 1 GiB
         assert!((m.kv_cache_gb(8192) - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn kv_cache_fallback_ignores_inactive_experts() {
+        // Without geometry the cache is sized from the parameter count. An
+        // MoE model's idle experts hold no keys or values, so charging the
+        // total would size a 37B-active model as if it were 671B.
+        let json = r#"{
+            "id": "test/moe", "name": "MoE", "provider": "test",
+            "params_b": 671.0, "active_params_b": 37.0,
+            "context_length": 8192, "use_case": "general"
+        }"#;
+        let moe: Model = serde_json::from_str(json).unwrap();
+        assert!(
+            moe.layers.is_none(),
+            "the fallback path must be the one under test"
+        );
+
+        let dense_equivalent = f64::from(8192u32) * 37.0 * KV_FALLBACK_GB_PER_TOKEN_PER_B;
+        assert!((moe.kv_cache_gb(8192) - dense_equivalent).abs() < 1e-9);
+        // Sanity: the total-parameter reading would be an order of magnitude worse.
+        assert!(
+            moe.kv_cache_gb(8192)
+                < f64::from(8192u32) * 671.0 * KV_FALLBACK_GB_PER_TOKEN_PER_B / 10.0
+        );
     }
 
     #[test]

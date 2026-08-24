@@ -1,0 +1,62 @@
+#!/bin/sh
+#
+# Runs the same three checks as .github/workflows/ci.yml before a commit is
+# created, so a red X on GitHub is caught here instead of arriving as mail
+# minutes later. This is the whole reason the hook exists: every failed CI run
+# in this repository's history was a commit that would not have passed
+# `cargo fmt --check`.
+#
+# Enable it once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# Skip it for a single commit when you genuinely need to:
+#
+#     LLMSPEC_SKIP_HOOKS=1 git commit ...
+#
+# The checks read the working tree, not the staged snapshot. That matches how
+# this repository is actually used — VS Code's Commit button stages everything
+# — and avoids the stash dance, which loses work when it goes wrong.
+
+set -e
+
+if [ "$LLMSPEC_SKIP_HOOKS" = "1" ]; then
+    echo "pre-commit: atlandi (LLMSPEC_SKIP_HOOKS=1)"
+    exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-commit: cargo PATH'te yok, kontroller atlaniyor" >&2
+    exit 0
+fi
+
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+
+# $1 human-readable check name, $2 the command that fixes it, rest: the check.
+run() {
+    name=$1
+    remedy=$2
+    shift 2
+    printf 'pre-commit: %s ... ' "$name"
+    if "$@" >"$log" 2>&1; then
+        echo "tamam"
+        return 0
+    fi
+    echo "BASARISIZ"
+    echo "" >&2
+    sed -n '1,40p' "$log" >&2
+    echo "" >&2
+    echo "  ---------------------------------------------------------------" >&2
+    echo "  COMMIT DURDURULDU - CI'daki '$name' isi bu haliyle duser." >&2
+    echo "  Duzeltme: $remedy" >&2
+    echo "  ---------------------------------------------------------------" >&2
+    exit 1
+}
+
+run "Format check" "cargo fmt" cargo fmt -- --check
+run "Clippy" "yukaridaki uyarilari duzelt" \
+    cargo clippy --all-targets --all-features -- -D warnings
+run "Test" "cargo test --all-features" cargo test --all-features
+
+echo "pre-commit: hepsi gecti"

@@ -50,7 +50,11 @@
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "yi-coder:9b"
+      "ollama": "yi-coder:9b",
+      "layers": 48,
+      "hidden_size": 4096,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "01-ai/Yi-1.5-6B-Chat",
@@ -64,7 +68,11 @@
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "yi:6b"
+      "ollama": "yi:6b",
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "ai21labs/AI21-Jamba-Large-1.6",
@@ -103,7 +111,7 @@
       "name": "GTE Qwen2 7B",
       "provider": "Alibaba NLP",
       "params_b": 7.61,
-      "context_length": 32768,
+      "context_length": 131072,
       "use_case": "embedding",
       "license": "apache-2.0",
       "released": "2024-06",
@@ -111,7 +119,11 @@
         "embedding"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 28,
+      "hidden_size": 3584,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "thenlper/gte-large",
@@ -133,7 +145,6 @@
       "name": "Qwen3 235B A22B",
       "provider": "Alibaba Qwen",
       "params_b": 235.0,
-      "active_params_b": 22.0,
       "context_length": 131072,
       "use_case": "reasoning",
       "license": "apache-2.0",
@@ -146,6 +157,7 @@
       "quality_tier": 5,
       "gguf": true,
       "ollama": "qwen3:235b",
+      "active_params_b": 22.0,
       "layers": 94,
       "hidden_size": 4096,
       "kv_heads": 4,
@@ -166,7 +178,11 @@
       ],
       "quality_tier": 5,
       "gguf": true,
-      "active_params_b": 22.0
+      "active_params_b": 22.0,
+      "layers": 94,
+      "hidden_size": 4096,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "Qwen/Qwen3-Next-80B-A3B-Instruct",
@@ -182,14 +198,18 @@
       ],
       "quality_tier": 5,
       "gguf": true,
-      "active_params_b": 3.0
+      "active_params_b": 3.0,
+      "layers": 48,
+      "hidden_size": 2048,
+      "kv_heads": 2,
+      "head_dim": 256
     },
     {
       "id": "Qwen/Qwen2.5-VL-72B-Instruct",
       "name": "Qwen2.5-VL 72B Instruct",
       "provider": "Alibaba Qwen",
       "params_b": 73.4,
-      "context_length": 32768,
+      "context_length": 128000,
       "use_case": "multimodal",
       "license": "qwen",
       "released": "2025-01",
@@ -230,7 +250,7 @@
       "name": "Qwen2.5-VL 32B Instruct",
       "provider": "Alibaba Qwen",
       "params_b": 33.4,
-      "context_length": 32768,
+      "context_length": 128000,
       "use_case": "multimodal",
       "license": "apache-2.0",
       "released": "2025-03",
@@ -374,7 +394,6 @@
       "name": "Qwen3 30B A3B",
       "provider": "Alibaba Qwen",
       "params_b": 30.5,
-      "active_params_b": 3.3,
       "context_length": 262144,
       "use_case": "reasoning",
       "license": "apache-2.0",
@@ -387,6 +406,7 @@
       "quality_tier": 5,
       "gguf": true,
       "ollama": "qwen3:30b-a3b",
+      "active_params_b": 3.3,
       "layers": 48,
       "hidden_size": 2048,
       "kv_heads": 4,
@@ -408,6 +428,7 @@
       "gguf": true,
       "active_params_b": 3.3,
       "layers": 48,
+      "hidden_size": 2048,
       "kv_heads": 4,
       "head_dim": 128
     },
@@ -428,6 +449,7 @@
       "ollama": "qwen3-coder:30b",
       "active_params_b": 3.3,
       "layers": 48,
+      "hidden_size": 2048,
       "kv_heads": 4,
       "head_dim": 128
     },
@@ -498,7 +520,7 @@
       "name": "Qwen2.5-VL 7B Instruct",
       "provider": "Alibaba Qwen",
       "params_b": 8.29,
-      "context_length": 32768,
+      "context_length": 128000,
       "use_case": "multimodal",
       "license": "apache-2.0",
       "released": "2025-01",
@@ -629,7 +651,11 @@
         "embedding"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 36,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "Qwen/CodeQwen1.5-7B-Chat",
@@ -643,7 +669,11 @@
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "codeqwen:7b"
+      "ollama": "codeqwen:7b",
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "Qwen/Qwen3-4B",
@@ -699,14 +729,18 @@
         "embedding"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 36,
+      "hidden_size": 2560,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "Qwen/Qwen2.5-VL-3B-Instruct",
       "name": "Qwen2.5-VL 3B Instruct",
       "provider": "Alibaba Qwen",
       "params_b": 3.75,
-      "context_length": 32768,
+      "context_length": 128000,
       "use_case": "multimodal",
       "license": "apache-2.0",
       "released": "2025-01",
@@ -728,7 +762,7 @@
       "params_b": 3.09,
       "context_length": 32768,
       "use_case": "general",
-      "license": "apache-2.0",
+      "license": "qwen-research",
       "released": "2024-09",
       "capabilities": [
         "tools"
@@ -772,13 +806,17 @@
         "vision"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 28,
+      "hidden_size": 1536,
+      "kv_heads": 2,
+      "head_dim": 128
     },
     {
       "id": "Qwen/Qwen3-1.7B",
       "name": "Qwen3 1.7B",
       "provider": "Alibaba Qwen",
-      "params_b": 1.7,
+      "params_b": 2.03,
       "context_length": 32768,
       "use_case": "general",
       "license": "apache-2.0",
@@ -790,8 +828,8 @@
       "gguf": true,
       "ollama": "qwen3:1.7b",
       "layers": 28,
-      "hidden_size": 1536,
-      "kv_heads": 2,
+      "hidden_size": 2048,
+      "kv_heads": 8,
       "head_dim": 128
     },
     {
@@ -838,7 +876,7 @@
       "id": "Qwen/Qwen3-0.6B",
       "name": "Qwen3 0.6B",
       "provider": "Alibaba Qwen",
-      "params_b": 0.6,
+      "params_b": 0.75,
       "context_length": 32768,
       "use_case": "general",
       "license": "apache-2.0",
@@ -851,7 +889,7 @@
       "ollama": "qwen3:0.6b",
       "layers": 28,
       "hidden_size": 1024,
-      "kv_heads": 2,
+      "kv_heads": 8,
       "head_dim": 128
     },
     {
@@ -871,7 +909,7 @@
       "ollama": "qwen3-embedding:0.6b",
       "layers": 28,
       "hidden_size": 1024,
-      "kv_heads": 2,
+      "kv_heads": 8,
       "head_dim": 128
     },
     {
@@ -922,7 +960,11 @@
       "capabilities": [],
       "quality_tier": 4,
       "gguf": true,
-      "ollama": "tulu3:70b"
+      "ollama": "tulu3:70b",
+      "layers": 80,
+      "hidden_size": 8192,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "allenai/OLMo-2-0325-32B-Instruct",
@@ -935,7 +977,11 @@
       "released": "2025-03",
       "capabilities": [],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 64,
+      "hidden_size": 5120,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "allenai/OLMo-2-13B-1124-Instruct",
@@ -967,7 +1013,11 @@
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "tulu3:8b"
+      "ollama": "tulu3:8b",
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "allenai/Molmo-7B-D-0924",
@@ -982,7 +1032,11 @@
         "vision"
       ],
       "quality_tier": 3,
-      "gguf": false
+      "gguf": false,
+      "layers": 28,
+      "hidden_size": 3584,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "allenai/OLMo-2-7B-1124-Instruct",
@@ -1013,7 +1067,11 @@
       "released": "2025-02",
       "capabilities": [],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 40,
+      "hidden_size": 5120,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "arcee-ai/AFM-4.5B",
@@ -1028,7 +1086,11 @@
         "tools"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 36,
+      "hidden_size": 2560,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "BAAI/bge-m3",
@@ -1044,11 +1106,7 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "ollama": "bge-m3",
-      "layers": 24,
-      "hidden_size": 1024,
-      "kv_heads": 16,
-      "head_dim": 64
+      "ollama": "bge-m3"
     },
     {
       "id": "BAAI/bge-reranker-v2-m3",
@@ -1079,11 +1137,7 @@
       ],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "bge-large",
-      "layers": 24,
-      "hidden_size": 1024,
-      "kv_heads": 16,
-      "head_dim": 64
+      "ollama": "bge-large"
     },
     {
       "id": "baidu/ERNIE-4.5-21B-A3B-PT",
@@ -1099,7 +1153,11 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "active_params_b": 3.0
+      "active_params_b": 3.0,
+      "layers": 28,
+      "hidden_size": 2560,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "baidu/ERNIE-4.5-0.3B-PT",
@@ -1112,7 +1170,11 @@
       "released": "2025-06",
       "capabilities": [],
       "quality_tier": 2,
-      "gguf": true
+      "gguf": true,
+      "layers": 18,
+      "hidden_size": 1024,
+      "kv_heads": 2,
+      "head_dim": 128
     },
     {
       "id": "bigcode/starcoder2-15b",
@@ -1138,7 +1200,7 @@
       "id": "bigcode/starcoder2-7b",
       "name": "StarCoder2 7B",
       "provider": "BigCode",
-      "params_b": 6.73,
+      "params_b": 7.17,
       "context_length": 16384,
       "use_case": "coding",
       "license": "bigcode-openrail-m",
@@ -1200,7 +1262,11 @@
         "reasoning"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 64,
+      "hidden_size": 5120,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "cognitivecomputations/dolphin-2.9.3-mistral-7B-32k",
@@ -1214,7 +1280,11 @@
       "capabilities": [],
       "quality_tier": 2,
       "gguf": true,
-      "ollama": "dolphin-mistral:7b"
+      "ollama": "dolphin-mistral:7b",
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "CohereForAI/c4ai-command-a-03-2025",
@@ -1257,7 +1327,7 @@
       "id": "CohereForAI/c4ai-command-r-08-2024",
       "name": "Command R 35B",
       "provider": "Cohere",
-      "params_b": 35.0,
+      "params_b": 32.3,
       "context_length": 131072,
       "use_case": "general",
       "license": "cc-by-nc-4.0",
@@ -1313,7 +1383,7 @@
       "id": "CohereForAI/aya-vision-8b",
       "name": "Aya Vision 8B",
       "provider": "Cohere",
-      "params_b": 8.06,
+      "params_b": 8.63,
       "context_length": 16384,
       "use_case": "multimodal",
       "license": "cc-by-nc-4.0",
@@ -1380,9 +1450,9 @@
       "name": "DeepSeek V3 0324",
       "provider": "DeepSeek",
       "params_b": 685.0,
-      "context_length": 131072,
+      "context_length": 163840,
       "use_case": "general",
-      "license": "deepseek",
+      "license": "mit",
       "released": "2025-03",
       "capabilities": [
         "tools"
@@ -1396,7 +1466,7 @@
       "name": "DeepSeek R1 0528",
       "provider": "DeepSeek",
       "params_b": 685.0,
-      "context_length": 131072,
+      "context_length": 163840,
       "use_case": "reasoning",
       "license": "mit",
       "released": "2025-05",
@@ -1412,8 +1482,7 @@
       "name": "DeepSeek V3 671B MoE",
       "provider": "DeepSeek",
       "params_b": 671.0,
-      "active_params_b": 37.0,
-      "context_length": 131072,
+      "context_length": 163840,
       "use_case": "general",
       "license": "deepseek",
       "released": "2024-12",
@@ -1424,6 +1493,7 @@
       "quality_tier": 5,
       "gguf": true,
       "ollama": "deepseek-v3:671b",
+      "active_params_b": 37.0,
       "layers": 61,
       "hidden_size": 7168,
       "kv_heads": 8,
@@ -1434,8 +1504,7 @@
       "name": "DeepSeek R1 671B MoE",
       "provider": "DeepSeek",
       "params_b": 671.0,
-      "active_params_b": 37.0,
-      "context_length": 131072,
+      "context_length": 163840,
       "use_case": "reasoning",
       "license": "mit",
       "released": "2025-01",
@@ -1446,6 +1515,7 @@
       "quality_tier": 5,
       "gguf": true,
       "ollama": "deepseek-r1:671b",
+      "active_params_b": 37.0,
       "layers": 61,
       "hidden_size": 7168,
       "kv_heads": 8,
@@ -1486,7 +1556,7 @@
       "ollama": "deepseek-coder:33b",
       "layers": 62,
       "hidden_size": 7168,
-      "kv_heads": 56,
+      "kv_heads": 8,
       "head_dim": 128
     },
     {
@@ -1514,8 +1584,7 @@
       "name": "DeepSeek Coder V2 Lite 16B",
       "provider": "DeepSeek",
       "params_b": 15.7,
-      "active_params_b": 2.4,
-      "context_length": 131072,
+      "context_length": 163840,
       "use_case": "coding",
       "license": "deepseek",
       "released": "2024-06",
@@ -1526,6 +1595,7 @@
       "quality_tier": 4,
       "gguf": true,
       "ollama": "deepseek-coder-v2:16b",
+      "active_params_b": 2.4,
       "layers": 27,
       "hidden_size": 2048,
       "kv_heads": 4,
@@ -1536,7 +1606,7 @@
       "name": "DeepSeek V2 Lite Chat",
       "provider": "DeepSeek",
       "params_b": 15.7,
-      "context_length": 32768,
+      "context_length": 163840,
       "use_case": "general",
       "license": "deepseek",
       "released": "2024-05",
@@ -1629,7 +1699,7 @@
       "name": "DeepSeek Prover V2 7B",
       "provider": "DeepSeek",
       "params_b": 6.91,
-      "context_length": 32768,
+      "context_length": 65536,
       "use_case": "reasoning",
       "license": "mit",
       "released": "2025-04",
@@ -1637,7 +1707,11 @@
         "math"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 30,
+      "hidden_size": 4096,
+      "kv_heads": 32,
+      "head_dim": 128
     },
     {
       "id": "deepseek-ai/deepseek-coder-6.7b-instruct",
@@ -1661,7 +1735,7 @@
       "id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
       "name": "DeepSeek R1 Distill 1.5B",
       "provider": "DeepSeek",
-      "params_b": 1.54,
+      "params_b": 1.78,
       "context_length": 131072,
       "use_case": "reasoning",
       "license": "mit",
@@ -1934,7 +2008,7 @@
       "name": "Idefics3 8B",
       "provider": "Hugging Face",
       "params_b": 8.46,
-      "context_length": 16384,
+      "context_length": 131072,
       "use_case": "multimodal",
       "license": "apache-2.0",
       "released": "2024-08",
@@ -1942,7 +2016,11 @@
         "vision"
       ],
       "quality_tier": 3,
-      "gguf": false
+      "gguf": false,
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "HuggingFaceH4/zephyr-7b-beta",
@@ -1976,7 +2054,11 @@
         "reasoning"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 36,
+      "hidden_size": 2048,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "HuggingFaceTB/SmolVLM-Instruct",
@@ -1991,7 +2073,11 @@
         "vision"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 24,
+      "hidden_size": 2048,
+      "kv_heads": 32,
+      "head_dim": 64
     },
     {
       "id": "mradermacher/SmolLM2-1.7B-Instruct-GGUF",
@@ -2062,7 +2148,11 @@
       "quality_tier": 4,
       "gguf": true,
       "ollama": "granite4:small-h",
-      "active_params_b": 9.0
+      "active_params_b": 9.0,
+      "layers": 40,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "ibm-granite/granite-3.3-8b-instruct",
@@ -2090,14 +2180,18 @@
       "name": "Granite 8B Code",
       "provider": "IBM",
       "params_b": 8.05,
-      "context_length": 131072,
+      "context_length": 128000,
       "use_case": "coding",
       "license": "apache-2.0",
       "released": "2024-07",
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "granite-code:8b"
+      "ollama": "granite-code:8b",
+      "layers": 36,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "ibm-granite/granite-4.0-h-tiny",
@@ -2114,13 +2208,17 @@
       "quality_tier": 3,
       "gguf": true,
       "ollama": "granite4:tiny-h",
-      "active_params_b": 1.0
+      "active_params_b": 1.0,
+      "layers": 40,
+      "hidden_size": 1536,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "ibm-granite/granite-4.0-micro",
       "name": "Granite 4.0 Micro",
       "provider": "IBM",
-      "params_b": 3.19,
+      "params_b": 3.4,
       "context_length": 131072,
       "use_case": "general",
       "license": "apache-2.0",
@@ -2130,14 +2228,18 @@
       ],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "granite4:micro"
+      "ollama": "granite4:micro",
+      "layers": 40,
+      "hidden_size": 2560,
+      "kv_heads": 8,
+      "head_dim": 64
     },
     {
       "id": "ibm-granite/granite-vision-3.2-2b",
       "name": "Granite Vision 3.2 2B",
       "provider": "IBM",
       "params_b": 2.98,
-      "context_length": 16384,
+      "context_length": 131072,
       "use_case": "multimodal",
       "license": "apache-2.0",
       "released": "2025-02",
@@ -2145,7 +2247,11 @@
         "vision"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 40,
+      "hidden_size": 2048,
+      "kv_heads": 8,
+      "head_dim": 64
     },
     {
       "id": "ibm-granite/granite-3.3-2b-instruct",
@@ -2193,7 +2299,11 @@
       "released": "2024-11",
       "capabilities": [],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "JetBrains/Mellum-4b-base",
@@ -2206,7 +2316,11 @@
       "released": "2025-04",
       "capabilities": [],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 30,
+      "hidden_size": 3072,
+      "kv_heads": 24,
+      "head_dim": 128
     },
     {
       "id": "jinaai/jina-embeddings-v3",
@@ -2286,7 +2400,7 @@
       "name": "LFM2-VL 1.6B",
       "provider": "Liquid AI",
       "params_b": 1.6,
-      "context_length": 32768,
+      "context_length": 128000,
       "use_case": "multimodal",
       "license": "lfm-open",
       "released": "2025-08",
@@ -2294,20 +2408,28 @@
         "vision"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 16,
+      "hidden_size": 2048,
+      "kv_heads": 8,
+      "head_dim": 64
     },
     {
       "id": "LiquidAI/LFM2-1.2B",
       "name": "LFM2 1.2B",
       "provider": "Liquid AI",
       "params_b": 1.17,
-      "context_length": 32768,
+      "context_length": 128000,
       "use_case": "general",
       "license": "lfm-open",
       "released": "2025-07",
       "capabilities": [],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 16,
+      "hidden_size": 2048,
+      "kv_heads": 8,
+      "head_dim": 64
     },
     {
       "id": "llava-hf/llava-v1.6-34b-hf",
@@ -2323,7 +2445,11 @@
       ],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "llava:34b"
+      "ollama": "llava:34b",
+      "layers": 60,
+      "hidden_size": 7168,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "llava-hf/llava-v1.6-mistral-7b-hf",
@@ -2353,7 +2479,11 @@
       "capabilities": [],
       "quality_tier": 1,
       "gguf": true,
-      "ollama": "vicuna:13b"
+      "ollama": "vicuna:13b",
+      "layers": 40,
+      "hidden_size": 5120,
+      "kv_heads": 40,
+      "head_dim": 128
     },
     {
       "id": "meta-llama/Llama-3.1-405B-Instruct",
@@ -2380,7 +2510,6 @@
       "name": "Llama 4 Maverick 17B 128E",
       "provider": "Meta",
       "params_b": 400.0,
-      "active_params_b": 17.0,
       "context_length": 1048576,
       "use_case": "general",
       "license": "llama4",
@@ -2393,6 +2522,7 @@
       "quality_tier": 5,
       "gguf": true,
       "ollama": "llama4:maverick",
+      "active_params_b": 17.0,
       "layers": 48,
       "hidden_size": 5120,
       "kv_heads": 8,
@@ -2403,7 +2533,6 @@
       "name": "Llama 4 Scout 17B 16E",
       "provider": "Meta",
       "params_b": 109.0,
-      "active_params_b": 17.0,
       "context_length": 524288,
       "use_case": "general",
       "license": "llama4",
@@ -2416,6 +2545,7 @@
       "quality_tier": 5,
       "gguf": true,
       "ollama": "llama4:scout",
+      "active_params_b": 17.0,
       "layers": 48,
       "hidden_size": 5120,
       "kv_heads": 8,
@@ -2486,7 +2616,7 @@
       "name": "Code Llama 70B Instruct",
       "provider": "Meta",
       "params_b": 69.0,
-      "context_length": 16384,
+      "context_length": 4096,
       "use_case": "coding",
       "license": "llama2",
       "released": "2024-01",
@@ -2658,7 +2788,6 @@
       "name": "Phi-3.5 MoE 42B",
       "provider": "Microsoft",
       "params_b": 41.9,
-      "active_params_b": 6.6,
       "context_length": 131072,
       "use_case": "general",
       "license": "mit",
@@ -2669,6 +2798,7 @@
       "quality_tier": 4,
       "gguf": true,
       "ollama": "phi3.5:moe",
+      "active_params_b": 6.6,
       "layers": 32,
       "hidden_size": 4096,
       "kv_heads": 8,
@@ -2727,7 +2857,7 @@
       "ollama": "phi3:14b",
       "layers": 40,
       "hidden_size": 5120,
-      "kv_heads": 8,
+      "kv_heads": 10,
       "head_dim": 128
     },
     {
@@ -2741,7 +2871,11 @@
       "released": "2023-11",
       "capabilities": [],
       "quality_tier": 2,
-      "gguf": true
+      "gguf": true,
+      "layers": 40,
+      "hidden_size": 5120,
+      "kv_heads": 40,
+      "head_dim": 128
     },
     {
       "id": "microsoft/Phi-3-small-8k-instruct",
@@ -2758,7 +2892,7 @@
       "ollama": "phi3:7b",
       "layers": 32,
       "hidden_size": 4096,
-      "kv_heads": 32,
+      "kv_heads": 8,
       "head_dim": 128
     },
     {
@@ -2775,7 +2909,11 @@
         "audio"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 32,
+      "hidden_size": 3072,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "microsoft/Phi-3.5-vision-instruct",
@@ -2790,7 +2928,11 @@
         "vision"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 32,
+      "hidden_size": 3072,
+      "kv_heads": 32,
+      "head_dim": 96
     },
     {
       "id": "microsoft/Phi-4-mini-instruct",
@@ -2871,7 +3013,7 @@
       "name": "Florence-2 Large",
       "provider": "Microsoft",
       "params_b": 0.77,
-      "context_length": 1024,
+      "context_length": 4096,
       "use_case": "multimodal",
       "license": "mit",
       "released": "2024-06",
@@ -2925,7 +3067,11 @@
       ],
       "quality_tier": 4,
       "gguf": false,
-      "active_params_b": 45.9
+      "active_params_b": 45.9,
+      "layers": 80,
+      "hidden_size": 6144,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "MiniMaxAI/MiniMax-M1-80k",
@@ -2941,14 +3087,17 @@
       ],
       "quality_tier": 5,
       "gguf": false,
-      "active_params_b": 45.9
+      "active_params_b": 45.9,
+      "layers": 80,
+      "hidden_size": 6144,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "mistralai/Mixtral-8x22B-Instruct-v0.1",
       "name": "Mixtral 8x22B Instruct",
       "provider": "Mistral AI",
       "params_b": 141.0,
-      "active_params_b": 39.1,
       "context_length": 65536,
       "use_case": "general",
       "license": "apache-2.0",
@@ -2960,6 +3109,7 @@
       "quality_tier": 4,
       "gguf": true,
       "ollama": "mixtral:8x22b",
+      "active_params_b": 39.1,
       "layers": 56,
       "hidden_size": 6144,
       "kv_heads": 8,
@@ -2990,7 +3140,6 @@
       "name": "Mixtral 8x7B Instruct",
       "provider": "Mistral AI",
       "params_b": 46.7,
-      "active_params_b": 12.9,
       "context_length": 32768,
       "use_case": "general",
       "license": "apache-2.0",
@@ -3001,6 +3150,7 @@
       "quality_tier": 4,
       "gguf": true,
       "ollama": "mixtral:8x7b",
+      "active_params_b": 12.9,
       "layers": 32,
       "hidden_size": 4096,
       "kv_heads": 8,
@@ -3080,7 +3230,11 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "ollama": "magistral:24b"
+      "ollama": "magistral:24b",
+      "layers": 40,
+      "hidden_size": 5120,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "mistralai/Codestral-2501",
@@ -3260,7 +3414,11 @@
       ],
       "quality_tier": 5,
       "gguf": true,
-      "active_params_b": 32.0
+      "active_params_b": 32.0,
+      "layers": 61,
+      "hidden_size": 7168,
+      "kv_heads": 64,
+      "head_dim": 112
     },
     {
       "id": "moonshotai/Kimi-VL-A3B-Instruct",
@@ -3276,7 +3434,11 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "active_params_b": 2.8
+      "active_params_b": 2.8,
+      "layers": 27,
+      "hidden_size": 2048,
+      "kv_heads": 16,
+      "head_dim": 128
     },
     {
       "id": "moonshotai/Moonlight-16B-A3B-Instruct",
@@ -3322,7 +3484,11 @@
       "capabilities": [],
       "quality_tier": 2,
       "gguf": true,
-      "ollama": "starling-lm:7b"
+      "ollama": "starling-lm:7b",
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "nomic-ai/nomic-embed-text-v2-moe",
@@ -3354,11 +3520,7 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "ollama": "nomic-embed-text",
-      "layers": 12,
-      "hidden_size": 768,
-      "kv_heads": 12,
-      "head_dim": 64
+      "ollama": "nomic-embed-text"
     },
     {
       "id": "NousResearch/Hermes-3-Llama-3.1-70B",
@@ -3394,7 +3556,11 @@
         "reasoning"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 40,
+      "hidden_size": 5120,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "NousResearch/Hermes-3-Llama-3.1-8B",
@@ -3429,7 +3595,11 @@
         "reasoning"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "NovaSearch/stella_en_1.5B_v5",
@@ -3444,7 +3614,11 @@
         "embedding"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 28,
+      "hidden_size": 1536,
+      "kv_heads": 2,
+      "head_dim": 128
     },
     {
       "id": "nvidia/NVLM-D-72B",
@@ -3591,7 +3765,11 @@
         "audio"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 28,
+      "hidden_size": 3584,
+      "kv_heads": 4,
+      "head_dim": 128
     },
     {
       "id": "openbmb/MiniCPM-V-2_6",
@@ -3622,7 +3800,11 @@
         "tools"
       ],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 62,
+      "hidden_size": 2560,
+      "kv_heads": 40,
+      "head_dim": 64
     },
     {
       "id": "openchat/openchat-3.5-0106",
@@ -3636,7 +3818,11 @@
       "capabilities": [],
       "quality_tier": 2,
       "gguf": true,
-      "ollama": "openchat:7b"
+      "ollama": "openchat:7b",
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "perplexity-ai/r1-1776",
@@ -3698,11 +3884,7 @@
       ],
       "quality_tier": 2,
       "gguf": true,
-      "ollama": "all-minilm:l6-v2",
-      "layers": 6,
-      "hidden_size": 384,
-      "kv_heads": 12,
-      "head_dim": 32
+      "ollama": "all-minilm:l6-v2"
     },
     {
       "id": "internlm/internlm2_5-20b-chat",
@@ -3752,7 +3934,11 @@
         "tools"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 48,
+      "hidden_size": 4096,
+      "kv_heads": 2,
+      "head_dim": 128
     },
     {
       "id": "OpenGVLab/InternVL2_5-8B",
@@ -3803,11 +3989,7 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "ollama": "snowflake-arctic-embed2",
-      "layers": 24,
-      "hidden_size": 1024,
-      "kv_heads": 16,
-      "head_dim": 64
+      "ollama": "snowflake-arctic-embed2"
     },
     {
       "id": "stabilityai/stable-code-instruct-3b",
@@ -3856,7 +4038,11 @@
       ],
       "quality_tier": 4,
       "gguf": true,
-      "active_params_b": 13.0
+      "active_params_b": 13.0,
+      "layers": 32,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "tiiuae/falcon-40b-instruct",
@@ -3870,7 +4056,11 @@
       "capabilities": [],
       "quality_tier": 2,
       "gguf": true,
-      "ollama": "falcon:40b"
+      "ollama": "falcon:40b",
+      "layers": 60,
+      "hidden_size": 8192,
+      "kv_heads": 8,
+      "head_dim": 64
     },
     {
       "id": "TII/falcon-11B",
@@ -3903,10 +4093,10 @@
       "quality_tier": 4,
       "gguf": true,
       "ollama": "falcon3:10b",
-      "layers": 36,
-      "hidden_size": 4096,
-      "kv_heads": 8,
-      "head_dim": 128
+      "layers": 40,
+      "hidden_size": 3072,
+      "kv_heads": 4,
+      "head_dim": 256
     },
     {
       "id": "tiiuae/Falcon-H1-7B-Instruct",
@@ -3921,7 +4111,11 @@
         "tools"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 44,
+      "hidden_size": 3072,
+      "kv_heads": 2,
+      "head_dim": 128
     },
     {
       "id": "tiiuae/Falcon3-7B-Instruct",
@@ -3937,9 +4131,9 @@
       "gguf": true,
       "ollama": "falcon3:7b",
       "layers": 28,
-      "hidden_size": 4096,
-      "kv_heads": 8,
-      "head_dim": 128
+      "hidden_size": 3072,
+      "kv_heads": 4,
+      "head_dim": 256
     },
     {
       "id": "tiiuae/falcon-mamba-7b-instruct",
@@ -3966,7 +4160,11 @@
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "falcon3:3b"
+      "ollama": "falcon3:3b",
+      "layers": 22,
+      "hidden_size": 3072,
+      "kv_heads": 4,
+      "head_dim": 256
     },
     {
       "id": "tiiuae/Falcon3-1B-Instruct",
@@ -3980,7 +4178,11 @@
       "capabilities": [],
       "quality_tier": 2,
       "gguf": true,
-      "ollama": "falcon3:1b"
+      "ollama": "falcon3:1b",
+      "layers": 18,
+      "hidden_size": 2048,
+      "kv_heads": 4,
+      "head_dim": 256
     },
     {
       "id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -4020,15 +4222,15 @@
       "params_b": 22.1,
       "context_length": 4096,
       "use_case": "general",
-      "license": "apache-2.0",
+      "license": "mit",
       "released": "2024-09",
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
       "ollama": "solar-pro:22b",
-      "layers": 48,
-      "hidden_size": 4096,
-      "kv_heads": 32,
+      "layers": 64,
+      "hidden_size": 5120,
+      "kv_heads": 10,
       "head_dim": 128
     },
     {
@@ -4043,7 +4245,11 @@
       "capabilities": [],
       "quality_tier": 3,
       "gguf": true,
-      "ollama": "solar:10.7b"
+      "ollama": "solar:10.7b",
+      "layers": 48,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "ValiantLabs/Llama3.1-8B-Enigma",
@@ -4088,7 +4294,11 @@
       "released": "2024-01",
       "capabilities": [],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 62,
+      "hidden_size": 7168,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "xai-org/grok-1",
@@ -4116,7 +4326,11 @@
       "capabilities": [],
       "quality_tier": 4,
       "gguf": false,
-      "active_params_b": 115.0
+      "active_params_b": 115.0,
+      "layers": 64,
+      "hidden_size": 8192,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "zai-org/GLM-4.5-Air",
@@ -4133,7 +4347,11 @@
       ],
       "quality_tier": 5,
       "gguf": true,
-      "active_params_b": 12.0
+      "active_params_b": 12.0,
+      "layers": 46,
+      "hidden_size": 4096,
+      "kv_heads": 8,
+      "head_dim": 128
     },
     {
       "id": "THUDM/GLM-4-32B-0414",
@@ -4163,7 +4381,11 @@
         "reasoning"
       ],
       "quality_tier": 4,
-      "gguf": true
+      "gguf": true,
+      "layers": 61,
+      "hidden_size": 6144,
+      "kv_heads": 2,
+      "head_dim": 128
     },
     {
       "id": "THUDM/glm-4v-9b",
@@ -4197,7 +4419,7 @@
       "ollama": "glm4:9b",
       "layers": 40,
       "hidden_size": 4096,
-      "kv_heads": 4,
+      "kv_heads": 2,
       "head_dim": 128
     },
     {
@@ -4205,13 +4427,17 @@
       "name": "Zamba2 7B",
       "provider": "Zyphra",
       "params_b": 7.42,
-      "context_length": 16384,
+      "context_length": 4096,
       "use_case": "general",
       "license": "apache-2.0",
       "released": "2024-10",
       "capabilities": [],
       "quality_tier": 3,
-      "gguf": true
+      "gguf": true,
+      "layers": 81,
+      "hidden_size": 3584,
+      "kv_heads": 32,
+      "head_dim": 112
     }
   ]
 }
