@@ -22,7 +22,7 @@ use crate::config::Config;
 use crate::fit::{FitLevel, FitResult, RunMode, SpeedConfig};
 use crate::hardware::{Hardware, parse_size_gb};
 use crate::models::{ModelDb, Quant, UseCase};
-use crate::providers::{ProviderRegistry, Runtime, RuntimeKind};
+use crate::providers::{InstalledModel, ProviderRegistry, Runtime, RuntimeKind};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -454,7 +454,8 @@ fn cmd_bench(
 
     let targets = bench_targets(&client, &model.join(" "), all)?;
     let mut results = Vec::new();
-    for model_ref in &targets {
+    for target in &targets {
+        let model_ref = &target.reference;
         if !cli.json {
             eprintln!(
                 "benchmarking {model_ref} on {} ({runs} runs)...",
@@ -464,7 +465,10 @@ fn cmd_bench(
         let mut result = bench::run_one(&client, model_ref, runs, tokens)?;
         // Compare against what llmspec would have predicted, when the
         // runtime's name for the model resolves to a catalog entry.
-        if let Some(found) = session.db.find_for_runtime(model_ref) {
+        if let Some(found) = session
+            .db
+            .find_for_runtime_sized(model_ref, target.params_b)
+        {
             let analysis = fit::analyze(found, &session.hw, session.target, &session.cfg);
             let weights_gb = found.weights_gb(analysis.quant);
             bench::attach_estimate(&mut result, &analysis, weights_gb);
@@ -597,11 +601,42 @@ fn catalog_for(db: &ModelDb, runtime: Option<RuntimeKind>) -> Vec<models::Model>
     }
 }
 
-/// Resolve which model references to benchmark.
-fn bench_targets(client: &Runtime, query: &str, all: bool) -> Result<Vec<String>, String> {
-    if !query.is_empty() && !all {
-        return Ok(vec![query.to_string()]);
+/// One model to benchmark, with whatever the runtime knows about it.
+///
+/// The parameter count matters because a tag need not carry one: `:latest` is
+/// an alias, and without the reported size the measurement cannot be lined up
+/// against the estimate for the model it actually names.
+struct BenchTarget {
+    reference: String,
+    params_b: Option<f64>,
+}
+
+impl From<InstalledModel> for BenchTarget {
+    fn from(model: InstalledModel) -> BenchTarget {
+        BenchTarget {
+            reference: model.name,
+            params_b: model.params_b,
+        }
     }
+}
+
+/// Resolve which models to benchmark.
+fn bench_targets(client: &Runtime, query: &str, all: bool) -> Result<Vec<BenchTarget>, String> {
+    // A named model is benchmarked whether or not the runtime lists it, but
+    // the listing is still worth consulting for the size it reports.
+    if !query.is_empty() && !all {
+        let params_b = client.list_models().ok().and_then(|installed| {
+            installed
+                .into_iter()
+                .find(|m| m.name.eq_ignore_ascii_case(query))
+                .and_then(|m| m.params_b)
+        });
+        return Ok(vec![BenchTarget {
+            reference: query.to_string(),
+            params_b,
+        }]);
+    }
+
     let installed = client.list_models()?;
     if installed.is_empty() {
         return Err(format!(
@@ -609,14 +644,13 @@ fn bench_targets(client: &Runtime, query: &str, all: bool) -> Result<Vec<String>
             client.kind.label()
         ));
     }
-    let mut names: Vec<String> = installed.into_iter().map(|m| m.name).collect();
-    if all {
-        return Ok(names);
+    let mut targets: Vec<BenchTarget> = installed.into_iter().map(BenchTarget::from).collect();
+    if !all {
+        // No model named and `--all` not given: benchmark the first one, which
+        // is enough to answer "is my machine as fast as llmspec thinks".
+        targets.truncate(1);
     }
-    // No model named and `--all` not given: benchmark the first one, which is
-    // enough to answer "is my machine as fast as llmspec thinks".
-    names.truncate(1);
-    Ok(names)
+    Ok(targets)
 }
 
 /// `--max-context`, falling back to `OLLAMA_CONTEXT_LENGTH`.
