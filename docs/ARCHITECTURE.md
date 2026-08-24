@@ -83,8 +83,23 @@ The leading 2 is the key and value tensors; the trailing 2 is fp16. Without
 geometry, llmspec falls back to a per-parameter constant derived from
 Llama-3.1-8B. That fallback is less exact — a model with multi-head attention
 rather than grouped-query attention has a much larger cache than the constant
-assumes — so the catalog carries real geometry wherever it is known, and the
-schema rejects partial geometry, which would be silently ignored.
+assumes — so the catalog carries real geometry wherever it is known (186 of
+240 entries, checked against each model's `config.json` on HuggingFace), and
+the schema rejects partial geometry, which would be silently ignored.
+
+The fallback is keyed off the *active* parameter count, not the total. A KV
+cache is sized by the attention layers, and a mixture-of-experts model's idle
+experts contribute none: reading `params_b` sized DeepSeek-V3's cache at 90 GB
+against a real 1.9 GB. For a dense model the two counts are the same, so only
+MoE entries are affected.
+
+Two architecture families are deliberately left without geometry rather than
+given approximate numbers. Encoder-only embedding models (BERT, XLM-R, MPNet)
+and recurrent ones (RWKV) have no autoregressive KV cache at all, so a
+`kv_heads` copied from their attention head count would invent a cost that
+does not exist. Multi-head latent attention (DeepSeek V2/V3) reports a
+`num_key_value_heads` that its compressed cache does not actually pay for.
+In both cases the parameter heuristic is the more honest estimate.
 
 The KV cache is easy to underestimate. Qwen3-4B advertises a 262k context; the
 cache alone at that length is around 36 GB against 2.4 GB of Q4 weights. Most
