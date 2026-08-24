@@ -21,8 +21,10 @@ use crate::tui_theme::Palette;
 const SYSTEM_HEIGHT: u16 = 6;
 
 /// Height of the panel below the table. Sized to the tallest of the three
-/// panels so that none of them is silently clipped.
-const PANEL_HEIGHT: u16 = 16;
+/// panels so that none of them is silently clipped — the detail panel is the
+/// tallest, and it wraps, so this carries a line of slack over its natural
+/// height rather than sitting exactly on it.
+const PANEL_HEIGHT: u16 = 18;
 
 /// Table columns: heading, width, and whether the value is right-aligned.
 const COLUMNS: &[(&str, Constraint)] = &[
@@ -319,6 +321,17 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
             Span::styled(r.name.clone(), Style::new().fg(palette.accent).bold()),
             Span::styled(format!("  {}", r.model_id), dim(palette)),
         ]),
+        // Who made it, how big it is and what it is for. All three are in the
+        // table, but the panel is what stays open while a model is being
+        // considered, so repeating them here saves looking back up.
+        Line::from(vec![
+            label("Model", palette),
+            Span::raw(r.provider.clone()),
+            Span::styled(" · ", dim(palette)),
+            Span::raw(format_params(r.params_b, r.active_params_b)),
+            Span::styled(" · ", dim(palette)),
+            Span::raw(r.use_case.as_str()),
+        ]),
         Line::from(vec![
             label("Verdict", palette),
             Span::styled(r.fit.label(), fit_style(r.fit, palette).bold()),
@@ -353,14 +366,26 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
 
     // The command to actually run the thing is the point of the whole tool.
     text.push(match app.commands_for(r) {
-        Some((kind, install, run)) => Line::from(vec![
-            label("Run it", palette),
-            Span::styled(
-                if app.is_installed(r) { run } else { install },
-                Style::new().fg(palette.good),
-            ),
-            Span::styled(format!("   ({})", kind.label()), dim(palette)),
-        ]),
+        Some((kind, install, run)) => {
+            let installed = app.is_installed(r);
+            Line::from(vec![
+                label("Run it", palette),
+                Span::styled(
+                    if installed { run } else { install },
+                    Style::new().fg(palette.good),
+                ),
+                Span::styled(format!("   ({} · ", kind.label()), dim(palette)),
+                // Whether the weights are already on disk decides whether the
+                // command above downloads gigabytes or starts immediately, so
+                // it belongs next to the command rather than only in the table.
+                if installed {
+                    Span::styled("installed", Style::new().fg(palette.good))
+                } else {
+                    Span::styled("not installed — press d", Style::new().fg(palette.warn))
+                },
+                Span::styled(")", dim(palette)),
+            ])
+        }
         None => Line::from(vec![
             label("Run it", palette),
             Span::styled(
@@ -371,6 +396,10 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
     });
 
     text.push(Line::raw(""));
+    // The headline number the table ranks on. Showing only the four parts
+    // meant the panel never named the score the row was sorted by, and the
+    // `info` subcommand printed it while the panel did not.
+    text.push(score_bar("Overall", r.scores.composite, palette));
     text.push(score_bar("Quality", r.scores.quality, palette));
     text.push(score_bar("Speed", r.scores.speed, palette));
     text.push(score_bar("Fit", r.scores.fit, palette));
@@ -975,6 +1004,55 @@ mod tests {
     }
 
     #[test]
+    fn the_detail_panel_identifies_the_model_and_names_its_overall_score() {
+        let mut app = test_app();
+        app.mode = Mode::Detail;
+        let out = screen(&app, 150, 44);
+        let r = app.selected_result().unwrap();
+
+        assert!(
+            out.contains(r.provider.as_str()),
+            "provider missing:\n{out}"
+        );
+        assert!(
+            out.contains(r.use_case.as_str()),
+            "use case missing:\n{out}"
+        );
+        assert!(
+            out.contains(&format_params(r.params_b, r.active_params_b)),
+            "parameter count missing:\n{out}"
+        );
+        // The number the table sorts on was absent from the panel entirely.
+        assert!(
+            out.lines().any(|l| l.contains("Overall")
+                && l.contains(&format!("{:.1}", r.scores.composite))),
+            "the overall score is missing:\n{out}"
+        );
+    }
+
+    #[test]
+    fn the_detail_panel_says_whether_the_weights_are_already_on_disk() {
+        let mut app = test_app();
+        let row = app
+            .visible
+            .iter()
+            .position(|&i| app.results[i].ollama.is_some())
+            .unwrap();
+        app.selected = row;
+        app.mode = Mode::Detail;
+        assert!(
+            screen(&app, 150, 44).contains("not installed"),
+            "an absent model should say so next to its pull command"
+        );
+
+        let tag = app.results[app.visible[row]].ollama.clone().unwrap();
+        app.discovery.installed.insert(&tag);
+        let out = screen(&app, 150, 44);
+        assert!(out.contains("installed"), "{out}");
+        assert!(!out.contains("not installed"), "{out}");
+    }
+
+    #[test]
     fn an_installed_model_is_offered_the_run_command_not_the_pull() {
         let mut app = test_app();
         let row = app
@@ -998,9 +1076,14 @@ mod tests {
         let mut app = test_app();
 
         app.mode = Mode::Detail;
+        // Matching the label alone would also match the Context line further
+        // up, which stays visible even when the bars are cut off.
+        let out = screen(&app, 150, 44);
+        let last_bar = format!("{:.1}", app.selected_result().unwrap().scores.context);
         assert!(
-            screen(&app, 150, 44).contains("Context"),
-            "the detail panel's last score bar is clipped"
+            out.lines()
+                .any(|l| l.contains("Context") && l.contains(&last_bar)),
+            "the detail panel's last score bar is clipped:\n{out}"
         );
 
         app.mode = Mode::Plan;
