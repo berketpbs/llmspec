@@ -398,18 +398,46 @@ impl ModelDb {
     /// Look a model up by id, name, runtime tag, or free text.
     ///
     /// Exact matches win over fuzzy ones so that a precise query is never
-    /// answered with a near miss.
-    pub fn find(&self, query: &str) -> Option<&Model> {
+    /// answered with a near miss. A free-text query that matches several
+    /// models is reported as such rather than resolved to whichever happens to
+    /// come first in the catalog.
+    pub fn resolve(&self, query: &str) -> Lookup<'_> {
         let q = query.trim().to_ascii_lowercase();
-        self.models
+        if q.is_empty() {
+            return Lookup::NotFound;
+        }
+        let exact = self
+            .models
             .iter()
             .find(|m| {
                 m.id.to_ascii_lowercase() == q
                     || m.name.to_ascii_lowercase() == q
                     || m.ollama.as_deref().map(str::to_ascii_lowercase) == Some(q.clone())
             })
-            .or_else(|| self.find_for_runtime(&q))
-            .or_else(|| self.models.iter().find(|m| m.matches(&q)))
+            .or_else(|| self.find_for_runtime(&q));
+        if let Some(model) = exact {
+            return Lookup::Found(model);
+        }
+
+        let mut matches: Vec<&Model> = self.models.iter().filter(|m| m.matches(&q)).collect();
+        match matches.len() {
+            0 => Lookup::NotFound,
+            1 => Lookup::Found(matches.remove(0)),
+            _ => Lookup::Ambiguous(matches),
+        }
+    }
+
+    /// [`Self::resolve`], taking the first candidate when several match.
+    ///
+    /// For callers that address a model by an identifier they already hold —
+    /// an id from an earlier response, a catalog entry being re-read — where
+    /// there is nothing for a person to disambiguate.
+    pub fn find(&self, query: &str) -> Option<&Model> {
+        match self.resolve(query) {
+            Lookup::Found(model) => Some(model),
+            Lookup::Ambiguous(mut candidates) => Some(candidates.remove(0)),
+            Lookup::NotFound => None,
+        }
     }
 
     /// Resolve a name a local runtime used back to its catalog entry.
@@ -430,6 +458,19 @@ impl ModelDb {
                 || crate::providers::normalize_model_name(&m.id) == wanted
         })
     }
+}
+
+/// What looking a model up by a typed query produced.
+///
+/// The third case is the reason this is not an `Option`: answering "llama"
+/// with whichever Llama sorts first looks like an answer, and a person acting
+/// on the wrong model's numbers has no way to tell. Saying that the query was
+/// ambiguous costs one round trip and is never wrong.
+pub enum Lookup<'a> {
+    Found(&'a Model),
+    /// Several models matched the query and none of them exactly.
+    Ambiguous(Vec<&'a Model>),
+    NotFound,
 }
 
 // ---------------------------------------------------------------------------

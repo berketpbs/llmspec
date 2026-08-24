@@ -21,7 +21,7 @@ use colored::Colorize;
 use crate::config::Config;
 use crate::fit::{FitLevel, FitResult, RunMode, SpeedConfig};
 use crate::hardware::{Hardware, parse_size_gb};
-use crate::models::{ModelDb, Quant, UseCase};
+use crate::models::{Lookup, ModelDb, Quant, UseCase};
 use crate::providers::{ProviderRegistry, Runtime, RuntimeKind};
 
 #[derive(Parser, Debug)]
@@ -243,9 +243,11 @@ impl Session {
     /// Look one model up by the words the user typed.
     fn find(&self, words: &[String]) -> Result<&models::Model, String> {
         let query = words.join(" ");
-        self.db
-            .find(&query)
-            .ok_or_else(|| format!("no model matches '{query}'"))
+        match self.db.resolve(&query) {
+            Lookup::Found(model) => Ok(model),
+            Lookup::NotFound => Err(format!("no model matches '{query}'")),
+            Lookup::Ambiguous(candidates) => Err(ambiguous(&query, &candidates)),
+        }
     }
 }
 
@@ -531,6 +533,25 @@ fn cmd_default(cli: &Cli, session: Session) -> Result<(), String> {
     } = session;
     let mut app = tui_app::App::new(hw, db, target, cfg);
     tui_events::run(&mut app).map_err(|e| format!("terminal error: {e}"))
+}
+
+/// Report a query that matched several models, naming the ones it matched.
+///
+/// The list is the useful half: the next command is a copy of one of these
+/// lines, so enough of them are shown to pick from without burying the reason
+/// the first attempt failed.
+fn ambiguous(query: &str, candidates: &[&models::Model]) -> String {
+    const NAMED: usize = 8;
+
+    let mut out = format!("'{query}' matches {} models:", candidates.len());
+    for model in candidates.iter().take(NAMED) {
+        out.push_str(&format!("\n  {}", model.id));
+    }
+    if let Some(rest) = candidates.len().checked_sub(NAMED).filter(|n| *n > 0) {
+        out.push_str(&format!("\n  ... and {rest} more"));
+    }
+    out.push_str("\nname one of them, or narrow the query");
+    out
 }
 
 /// The one shape every "you typed something I don't know" error takes.
