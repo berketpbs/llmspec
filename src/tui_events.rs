@@ -285,6 +285,63 @@ mod tests {
     }
 
     #[test]
+    fn esc_backs_out_instead_of_quitting() {
+        // Closing the detail panel and closing the program used to be the
+        // same keystroke.
+        let mut app = test_app();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.mode, Mode::Detail);
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(!app.should_quit, "Esc must not end the session");
+
+        // And from the top level it is inert rather than fatal.
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.should_quit);
+        press(&mut app, KeyCode::Char('q'));
+        assert!(app.should_quit, "q still quits");
+    }
+
+    #[test]
+    fn status_bar_buttons_dispatch_the_key_they_advertise() {
+        let width = 200;
+        // The first button is search; clicking its first column must open
+        // search exactly as `/` does.
+        let (start, _, code) = super::tui_ui::status_button_layout_for_test(width)[0];
+        assert_eq!(code, KeyCode::Char('/'));
+        assert_eq!(tui_ui::status_button_at(width, start), Some(code));
+
+        let mut app = test_app();
+        handle_key(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
+        assert_eq!(app.mode, Mode::Search);
+    }
+
+    #[test]
+    fn a_click_between_buttons_does_nothing() {
+        let width = 200;
+        let layout = tui_ui::status_button_layout_for_test(width);
+        let gap = layout[0].1; // one past the first button's last column
+        assert!(gap < layout[1].0, "the buttons should not be flush");
+        assert_eq!(tui_ui::status_button_at(width, gap), None);
+        // Nor does the prefix, which is only a hint.
+        assert_eq!(tui_ui::status_button_at(width, 0), None);
+    }
+
+    #[test]
+    fn buttons_that_would_overflow_the_row_are_dropped() {
+        // A narrow terminal draws fewer buttons, and the ones it drops must
+        // stop answering clicks too.
+        let narrow = tui_ui::status_button_layout_for_test(30);
+        let wide = tui_ui::status_button_layout_for_test(200);
+        assert!(narrow.len() < wide.len());
+        assert!(
+            narrow.iter().all(|(_, end, _)| *end <= 30),
+            "a drawn button must fit the row"
+        );
+    }
+
+    #[test]
     fn navigates_with_vim_keys() {
         let mut app = test_app();
         press(&mut app, KeyCode::Char('j'));
