@@ -308,7 +308,7 @@ mod tests {
         let width = 200;
         // The first button is search; clicking its first column must open
         // search exactly as `/` does.
-        let (start, _, code) = super::tui_ui::status_button_layout_for_test(width)[0];
+        let (start, _, code) = tui_ui::status_button_layout(width)[0];
         assert_eq!(code, KeyCode::Char('/'));
         assert_eq!(tui_ui::status_button_at(width, start), Some(code));
 
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn a_click_between_buttons_does_nothing() {
         let width = 200;
-        let layout = tui_ui::status_button_layout_for_test(width);
+        let layout = tui_ui::status_button_layout(width);
         let gap = layout[0].1; // one past the first button's last column
         assert!(gap < layout[1].0, "the buttons should not be flush");
         assert_eq!(tui_ui::status_button_at(width, gap), None);
@@ -332,8 +332,8 @@ mod tests {
     fn buttons_that_would_overflow_the_row_are_dropped() {
         // A narrow terminal draws fewer buttons, and the ones it drops must
         // stop answering clicks too.
-        let narrow = tui_ui::status_button_layout_for_test(30);
-        let wide = tui_ui::status_button_layout_for_test(200);
+        let narrow = tui_ui::status_button_layout(30);
+        let wide = tui_ui::status_button_layout(200);
         assert!(narrow.len() < wide.len());
         assert!(
             narrow.iter().all(|(_, end, _)| *end <= 30),

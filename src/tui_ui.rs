@@ -619,7 +619,7 @@ const STATUS_BUTTONS: &[(&str, KeyCode)] = &[
 /// different label than the one drawn. Buttons that would run past the right
 /// edge are dropped rather than clipped — a half-drawn label that still
 /// answers to clicks is worse than no label.
-fn status_button_layout(width: u16) -> Vec<(u16, u16, KeyCode)> {
+pub fn status_button_layout(width: u16) -> Vec<(u16, u16, KeyCode)> {
     let mut x = STATUS_PREFIX.chars().count() as u16;
     let mut out = Vec::with_capacity(STATUS_BUTTONS.len());
     for (label, key) in STATUS_BUTTONS {
