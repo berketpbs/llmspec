@@ -680,7 +680,13 @@ fn quality_score(model: &Model, quant: Quant, target: UseCase, benchmarks: &Benc
     // while the heuristic still contributes 30% so that parameter count
     // and quantization loss are never entirely ignored.
     if let Some(bench) = benchmarks.lookup(&model.id, target) {
-        let bench_adjusted = bench * quant.quality_factor();
+        // Affinity applies here exactly as it does inside the heuristic. It
+        // used to be applied to only the 30% half, which let a model score
+        // most of its quality on a benchmark for work it is not built for:
+        // Qwen3-Embedding-0.6B took the qwen3 family's chat number at full
+        // credit and ranked thirteenth for general use.
+        let bench_adjusted =
+            bench * quant.quality_factor() * use_case_affinity(model.use_case, target);
         return (bench_adjusted * 0.70 + heuristic * 0.30).clamp(0.0, 100.0);
     }
 
