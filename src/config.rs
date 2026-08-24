@@ -15,6 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::fit::SpeedConfig;
+use crate::hardware::CPU_MEM_BANDWIDTH_FALLBACK_GB_S;
 use crate::models::{Model, UseCase};
 
 const CONFIG_FILE: &str = "config.json";
@@ -56,6 +57,15 @@ pub struct Config {
     pub use_case: UseCase,
     /// Persisted speed tunables from the TUI's advanced-config panel.
     pub speed: PersistedSpeed,
+    /// Measured system-memory bandwidth in GB/s, cached after the first run.
+    ///
+    /// This is a property of the machine rather than a preference, but it
+    /// lives here for the same reason a cache does: measuring costs tens of
+    /// milliseconds, the answer does not change between runs, and paying for
+    /// it on every invocation would be visible in a tool that otherwise
+    /// answers in under a second.
+    #[serde(default)]
+    pub ram_bandwidth_gb_s: Option<f64>,
 }
 
 impl Default for Config {
@@ -64,6 +74,7 @@ impl Default for Config {
             theme: 0,
             use_case: UseCase::General,
             speed: PersistedSpeed::default(),
+            ram_bandwidth_gb_s: None,
         }
     }
 }
@@ -114,6 +125,26 @@ impl PersistedSpeed {
 }
 
 impl Config {
+    /// This machine's memory bandwidth, measured once and remembered.
+    ///
+    /// The first call on a machine runs the probe and writes the result back
+    /// to `config.json`; every later call reads it. A machine that cannot be
+    /// measured, or cannot persist anything, falls back to the shipped
+    /// constant rather than paying for a failing probe on every run.
+    pub fn ram_bandwidth(&mut self) -> f64 {
+        if let Some(measured) = self.ram_bandwidth_gb_s {
+            return measured;
+        }
+        let Some(measured) = crate::hardware::measure_ram_bandwidth_gb_s() else {
+            return CPU_MEM_BANDWIDTH_FALLBACK_GB_S;
+        };
+        self.ram_bandwidth_gb_s = Some(measured);
+        // Best effort: an unwritable config directory costs a re-measure next
+        // run, which is not worth interrupting the user over.
+        let _ = self.save();
+        measured
+    }
+
     /// Load the stored config, falling back to defaults on any problem.
     pub fn load() -> Config {
         config_dir()
@@ -210,6 +241,7 @@ mod tests {
                 efficiency: 0.7,
                 ..PersistedSpeed::default()
             },
+            ram_bandwidth_gb_s: Some(94.5),
         };
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path).unwrap();
