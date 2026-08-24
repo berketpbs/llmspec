@@ -194,6 +194,21 @@ constant stands in:
 Mode factors then apply: 1.0 on GPU, 0.8 for MoE offload, 0.5 for CPU+GPU
 spill, 0.3 for CPU-only, and 0.9 for multi-GPU tensor parallelism.
 
+### Running the model backwards
+
+Because throughput is a division, it inverts. `plan --target-tps` solves the
+same relation for bandwidth:
+
+```
+bandwidth_GB/s ≈ target_tok/s × weights_GB ÷ (efficiency × gpu_factor)
+```
+
+and then reports the cards in the bandwidth table that clear both that figure
+and the VRAM the placement needs, least sufficient first. Planning answers a
+question about *any* machine, so it runs against a fixed reference GPU rather
+than the detected one — otherwise the same command would print different
+numbers on different desks.
+
 ### The estimate is deliberately conservative
 
 0.55 is a floor that holds across hardware rather than a fit to any one

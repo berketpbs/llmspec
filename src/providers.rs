@@ -93,6 +93,11 @@ impl RuntimeKind {
         }
     }
 
+    /// The canonical spellings, for the "try: …" half of a parse error.
+    pub fn hint() -> String {
+        crate::models::hint_list(&RuntimeKind::ALL, RuntimeKind::slug)
+    }
+
     pub fn parse(s: &str) -> Option<RuntimeKind> {
         match s
             .trim()

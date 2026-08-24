@@ -21,6 +21,19 @@ const OVERHEAD_WEIGHT_FRACTION: f64 = 0.05;
 
 const BYTES_PER_GB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+/// Join an enum's labels into the "try: …" half of a parse error.
+///
+/// Deriving the list from the variants keeps it in step with the parser: a new
+/// quantization level or use case cannot leave a stale hand-written list
+/// behind in an error message.
+pub fn hint_list<T: Copy>(values: &[T], label: fn(T) -> &'static str) -> String {
+    values
+        .iter()
+        .map(|&value| label(value).to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 // ---------------------------------------------------------------------------
 // Use cases
 // ---------------------------------------------------------------------------
@@ -55,6 +68,11 @@ impl UseCase {
             UseCase::Multimodal => "multimodal",
             UseCase::Embedding => "embedding",
         }
+    }
+
+    /// The canonical spellings, for the "try: …" half of a parse error.
+    pub fn hint() -> String {
+        hint_list(&UseCase::ALL, UseCase::as_str)
     }
 
     pub fn parse(s: &str) -> Option<UseCase> {
@@ -165,6 +183,11 @@ impl Quant {
             Quant::Q3KM => "Q3_K_M",
             Quant::Q2K => "Q2_K",
         }
+    }
+
+    /// The canonical spellings, for the "try: …" half of a parse error.
+    pub fn hint() -> String {
+        hint_list(&Quant::HIERARCHY, Quant::label)
     }
 
     pub fn parse(s: &str) -> Option<Quant> {

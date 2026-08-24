@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::fmt;
 
 use crate::hardware::Hardware;
-use crate::models::{BenchmarkDb, Model, Quant, UseCase};
+use crate::models::{BenchmarkDb, Model, Quant, UseCase, hint_list};
 
 /// Assumed system-memory bandwidth (GB/s) for CPU-resident weights.
 const CPU_MEM_BANDWIDTH_GB_S: f64 = 60.0;
@@ -130,6 +130,8 @@ pub enum RunMode {
 }
 
 impl RunMode {
+    pub const ALL: [RunMode; 4] = [RunMode::Gpu, RunMode::Moe, RunMode::CpuGpu, RunMode::Cpu];
+
     pub fn label(self) -> &'static str {
         match self {
             RunMode::Gpu => "GPU",
@@ -137,6 +139,11 @@ impl RunMode {
             RunMode::CpuGpu => "CPU+GPU",
             RunMode::Cpu => "CPU",
         }
+    }
+
+    /// The canonical spellings, for the "try: …" half of a parse error.
+    pub fn hint() -> String {
+        hint_list(&RunMode::ALL, RunMode::label)
     }
 
     pub fn parse(s: &str) -> Option<RunMode> {
@@ -165,6 +172,14 @@ pub enum FitLevel {
 }
 
 impl FitLevel {
+    /// Best first, which is the order the hint should read in.
+    pub const ALL: [FitLevel; 4] = [
+        FitLevel::Perfect,
+        FitLevel::Good,
+        FitLevel::Marginal,
+        FitLevel::TooTight,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             FitLevel::Perfect => "Perfect",
@@ -172,6 +187,14 @@ impl FitLevel {
             FitLevel::Marginal => "Marginal",
             FitLevel::TooTight => "Too Tight",
         }
+    }
+
+    /// The canonical spellings, for the "try: …" half of a parse error.
+    ///
+    /// `parse` ignores spaces and underscores, so the lowercased label is
+    /// accepted as written.
+    pub fn hint() -> String {
+        hint_list(&FitLevel::ALL, FitLevel::label)
     }
 
     pub fn parse(s: &str) -> Option<FitLevel> {
@@ -570,6 +593,24 @@ fn try_place(
 ///
 /// `gpu_fraction` is the share of the footprint that stays on the accelerator;
 /// the remainder is read across the much slower system memory bus.
+/// Weight bytes (GB) that must be read to generate one token.
+///
+/// This is the denominator of the whole throughput model, and the one term
+/// that makes it invertible: given a target tokens/sec, the bandwidth a
+/// machine needs is this figure times that target.
+///
+/// MoE models read only the experts that fire, which is why a 235B model with
+/// 22B active runs at roughly 22B speed. The floor keeps a hypothetical
+/// zero-size model from dividing by zero.
+fn bytes_read_per_token_gb(model: &Model, quant: Quant) -> f64 {
+    if model.is_moe() {
+        model.active_weights_gb(quant)
+    } else {
+        model.weights_gb(quant)
+    }
+    .max(0.01)
+}
+
 pub fn estimate_tps(
     model: &Model,
     hw: &Hardware,
@@ -578,13 +619,7 @@ pub fn estimate_tps(
     gpu_fraction: f64,
     cfg: &SpeedConfig,
 ) -> f64 {
-    // Bytes read per token: only the active weights for MoE models.
-    let read_gb = if model.is_moe() {
-        model.active_weights_gb(quant)
-    } else {
-        model.weights_gb(quant)
-    }
-    .max(0.01);
+    let read_gb = bytes_read_per_token_gb(model, quant);
 
     let resident = gpu_fraction.clamp(0.0, 1.0);
     let base = match (mode, hw.primary_bandwidth()) {
@@ -1143,6 +1178,18 @@ mod tests {
 // Hardware Planning (inverse fit analysis)
 // ---------------------------------------------------------------------------
 
+/// VRAM given to the reference GPU: more than any catalog model needs, so a
+/// planning estimate never fails for want of capacity on an imaginary card.
+const REFERENCE_VRAM_GB: f64 = 256.0;
+
+/// The card the plan's GPU throughput figure describes.
+///
+/// A concrete, named reference beats "a fast GPU": the number means something
+/// only if the reader knows what it was measured against, and it stops the
+/// answer from silently depending on the machine llmspec happens to run on.
+const REFERENCE_GPU_NAME: &str = "RTX 4090";
+const REFERENCE_GPU_BANDWIDTH_GB_S: f64 = 1008.0;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct HardwarePlan {
     pub model_name: String,
@@ -1156,13 +1203,41 @@ pub struct HardwarePlan {
     pub min_vram_gb: f64,
     pub recommended_vram_gb: f64,
     pub min_ram_gb: f64,
+    /// Throughput on [`REFERENCE_GPU_NAME`], which `reference_gpu` names.
     pub tps_gpu: f64,
     pub tps_cpu: f64,
+    pub reference_gpu: &'static str,
     pub viable_modes: Vec<&'static str>,
+    /// Present only when a throughput target was asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<TargetPlan>,
+}
+
+/// What it would take to hit a requested tokens/sec.
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetPlan {
+    pub target_tps: f64,
+    /// Memory bandwidth a GPU needs to reach the target at this quantization.
+    pub required_bandwidth_gb_s: f64,
+    /// Cards from the reference table that clear both that bandwidth and the
+    /// VRAM the placement needs, least sufficient first. Empty when nothing in
+    /// the table is fast enough.
+    pub gpus: Vec<&'static str>,
 }
 
 /// Plan hardware requirements for a model with a given configuration.
-pub fn plan(model: &Model, quant: Quant, context: u32, cfg: &SpeedConfig) -> HardwarePlan {
+///
+/// Unlike the rest of the fit engine this answers a machine-independent
+/// question, so it runs against [`Hardware::reference_gpu`] and
+/// [`Hardware::reference_cpu`] rather than detecting anything. That matters
+/// for more than purity: the TUI calls this while drawing the plan panel.
+pub fn plan(
+    model: &Model,
+    quant: Quant,
+    context: u32,
+    cfg: &SpeedConfig,
+    target_tps: Option<f64>,
+) -> HardwarePlan {
     let weights_size = model.weights_gb(quant);
     let kv_cache_size = model.kv_cache_gb(context);
     let total_gpu = weights_size + kv_cache_size;
@@ -1170,24 +1245,29 @@ pub fn plan(model: &Model, quant: Quant, context: u32, cfg: &SpeedConfig) -> Har
     let recommended_vram = (total_gpu * RECOMMENDED_HEADROOM).ceil();
 
     let mut viable_modes = Vec::new();
-    if min_vram <= 256.0 {
+    if min_vram <= REFERENCE_VRAM_GB {
         viable_modes.push("GPU");
     }
-
     if model.is_moe() {
         viable_modes.push("MoE");
     }
-
     viable_modes.push("CPU+GPU");
     viable_modes.push("CPU");
 
-    let mut hw_gpu = Hardware::detect();
-    hw_gpu.set_vram(256.0);
+    let hw_gpu = Hardware::reference_gpu(
+        REFERENCE_GPU_NAME,
+        REFERENCE_GPU_BANDWIDTH_GB_S,
+        REFERENCE_VRAM_GB,
+    );
     let tps_gpu = estimate_tps(model, &hw_gpu, quant, RunMode::Gpu, 1.0, cfg);
-
-    let mut hw_cpu = Hardware::detect();
-    hw_cpu.gpus.clear();
-    let tps_cpu = estimate_tps(model, &hw_cpu, quant, RunMode::Cpu, 0.0, cfg);
+    let tps_cpu = estimate_tps(
+        model,
+        &Hardware::reference_cpu(),
+        quant,
+        RunMode::Cpu,
+        0.0,
+        cfg,
+    );
 
     HardwarePlan {
         model_name: model.name.clone(),
@@ -1201,6 +1281,42 @@ pub fn plan(model: &Model, quant: Quant, context: u32, cfg: &SpeedConfig) -> Har
         min_ram_gb: total_gpu.ceil(),
         tps_gpu,
         tps_cpu,
+        reference_gpu: REFERENCE_GPU_NAME,
         viable_modes,
+        target: target_tps.map(|tps| plan_for_target(model, quant, tps, recommended_vram, cfg)),
+    }
+}
+
+/// Invert the throughput model: what bandwidth reaches `target_tps`, and which
+/// cards have it.
+///
+/// The forward estimate for a fully resident model is
+/// `bandwidth / bytes_per_token * efficiency * gpu_factor`, so solving for
+/// bandwidth is a division. Cards must also hold the placement, which is why
+/// the VRAM bar is the advised figure rather than the bare minimum — a card
+/// that fits the weights with nothing to spare will not reach the target.
+fn plan_for_target(
+    model: &Model,
+    quant: Quant,
+    target_tps: f64,
+    vram_needed_gb: f64,
+    cfg: &SpeedConfig,
+) -> TargetPlan {
+    let target_tps = target_tps.max(0.0);
+    let read_gb = bytes_read_per_token_gb(model, quant);
+    let scale = cfg.efficiency * cfg.gpu_factor;
+    let required = if scale > 0.0 {
+        target_tps * read_gb / scale
+    } else {
+        f64::INFINITY
+    };
+
+    TargetPlan {
+        target_tps,
+        required_bandwidth_gb_s: required,
+        gpus: crate::hardware::gpus_reaching(required, vram_needed_gb)
+            .into_iter()
+            .map(crate::hardware::GpuSpec::display)
+            .collect(),
     }
 }
