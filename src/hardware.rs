@@ -763,16 +763,25 @@ pub const CPU_MEM_BANDWIDTH_FALLBACK_GB_S: f64 = 60.0;
 
 /// Buffer size for the bandwidth probe.
 ///
-/// It has to be comfortably larger than the last-level cache or the probe
-/// measures the cache instead of main memory. 64 MiB clears every desktop and
-/// laptop L3 in circulation, including the 128 MiB V-Cache parts once the
-/// read is streaming rather than resident.
-const PROBE_BYTES: usize = 64 * 1024 * 1024;
+/// It has to be comfortably larger than the last-level cache, or the probe
+/// measures the cache instead of main memory. 128 MiB clears every desktop and
+/// laptop L3 in circulation, including the 128 MiB V-Cache parts once the read
+/// is streaming rather than resident.
+const PROBE_BYTES: usize = 128 * 1024 * 1024;
 
-/// Timed passes over the buffer. The fastest is kept: a pass can only be
-/// slowed by something else on the machine, never speeded up, so the best of
-/// a few is closer to the hardware than their average.
-const PROBE_PASSES: usize = 5;
+/// Reads of the whole buffer inside one timed round.
+///
+/// The threads are started once and loop this many times, so the cost of
+/// starting them is amortised instead of being measured. That matters more
+/// than it sounds: starting eight threads costs about as long as reading
+/// 128 MiB, so timing a round that spawns its own threads measures the
+/// scheduler as much as the memory.
+const PROBE_READS_PER_ROUND: usize = 10;
+
+/// Timed rounds. The fastest is kept: a round can only be slowed by something
+/// else on the machine, never speeded up, so the best of a few sits closer to
+/// the hardware than their average.
+const PROBE_ROUNDS: usize = 3;
 
 /// Measure how fast this machine streams from main memory, in GB/s.
 ///
@@ -782,47 +791,79 @@ const PROBE_PASSES: usize = 5;
 /// dual-channel DDR4 laptop and a DDR5 desktop differ by a factor of three,
 /// and no CPU model string reliably predicts which one you have.
 ///
+/// `threads` readers run at once, because one core cannot saturate a modern
+/// memory controller — a single-threaded probe reports well under half of what
+/// the memory delivers. Inference is threaded, so a single-threaded figure
+/// would describe a workload nobody runs, and would be a worse input to the
+/// estimates than the constant it replaces.
+///
 /// The probe reads; it never writes. A read-only stream is what token
 /// generation actually does, and it avoids the write-allocate traffic that
 /// would make a memcpy benchmark report a number inference never sees.
 ///
 /// Returns `None` if the buffer cannot be allocated, or if the result is
-/// implausible enough that a stored constant is the better answer.
-pub fn measure_ram_bandwidth_gb_s() -> Option<f64> {
-    use std::hint::black_box;
-    use std::time::Instant;
-
+/// implausible enough that the stored constant is the better answer.
+pub fn measure_ram_bandwidth_gb_s(threads: usize) -> Option<f64> {
+    let threads = threads.clamp(1, 64);
     let len = PROBE_BYTES / std::mem::size_of::<u64>();
     let mut buffer: Vec<u64> = Vec::new();
     buffer.try_reserve_exact(len).ok()?;
     // Distinct values, so nothing downstream can be folded into a constant.
     buffer.extend((0..len).map(|i| i as u64));
+    let chunk = len.div_ceil(threads).max(1);
 
-    // An untimed pass first: the timed ones must measure memory traffic, not
+    // One untimed round first: the timed ones must measure memory traffic, not
     // the page faults that first touching a fresh allocation costs.
-    black_box(sum(&buffer));
+    timed_round(&buffer, chunk);
 
-    let mut best = f64::INFINITY;
-    for _ in 0..PROBE_PASSES {
-        let start = Instant::now();
-        black_box(sum(&buffer));
-        let elapsed = start.elapsed().as_secs_f64();
-        if elapsed > 0.0 && elapsed < best {
-            best = elapsed;
-        }
-    }
+    let best = (0..PROBE_ROUNDS)
+        .map(|_| timed_round(&buffer, chunk))
+        .filter(|seconds| *seconds > 0.0)
+        .fold(f64::INFINITY, f64::min);
     if !best.is_finite() {
         return None;
     }
 
-    let gb_s = PROBE_BYTES as f64 / BYTES_PER_GB / best;
-    // A number outside this range means the probe measured something other
-    // than memory — a cache, or a machine descheduling us mid-pass. Refusing
-    // to answer beats reporting a figure the estimates would trust.
+    let bytes = (PROBE_BYTES * PROBE_READS_PER_ROUND) as f64;
+    let gb_s = bytes / BYTES_PER_GB / best;
+    // A figure outside this range means the probe measured something other
+    // than memory — a cache, or a machine descheduling us mid-round. Refusing
+    // to answer beats reporting a number the estimates would trust.
     (2.0..=2000.0).contains(&gb_s).then_some(gb_s)
 }
 
-/// Sequential read of the whole buffer.
+/// Read the buffer `PROBE_READS_PER_ROUND` times in parallel; return seconds.
+///
+/// Threads are started once for the whole round and each folds only its own
+/// slice, so nothing is shared and nothing waits until the join. What is timed
+/// is the memory system's aggregate throughput, which is the ceiling inference
+/// actually runs into.
+fn timed_round(buffer: &[u64], chunk: usize) -> f64 {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    let start = Instant::now();
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = buffer
+            .chunks(chunk)
+            .map(|slice| {
+                scope.spawn(move || {
+                    let mut acc = 0u64;
+                    for _ in 0..PROBE_READS_PER_ROUND {
+                        acc = acc.wrapping_add(sum(slice));
+                    }
+                    acc
+                })
+            })
+            .collect();
+        for worker in workers {
+            black_box(worker.join().unwrap_or(0));
+        }
+    });
+    start.elapsed().as_secs_f64()
+}
+
+/// Sequential read of one slice.
 ///
 /// Written as a plain fold so the compiler is free to vectorise and prefetch
 /// it, which is exactly what the memory system does under inference too.
@@ -882,7 +923,7 @@ mod tests {
 
     #[test]
     fn the_memory_probe_reports_a_plausible_figure() {
-        let Some(measured) = measure_ram_bandwidth_gb_s() else {
+        let Some(measured) = measure_ram_bandwidth_gb_s(4) else {
             // A machine that cannot allocate the buffer is allowed to decline;
             // the fallback covers it. Nothing else about the test applies.
             return;

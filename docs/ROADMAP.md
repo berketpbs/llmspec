@@ -25,6 +25,7 @@ only about scope.
 - Windows AMD/Intel VRAM from the driver's 64-bit registry value
 - Apple unified memory sized against the OS wiring cap
 - Multi-GPU VRAM aggregation
+- Measured system-memory bandwidth, cached per machine
 - Overrides for every detected value, and simulation from the interface
 
 **Runtimes**

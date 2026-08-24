@@ -131,11 +131,11 @@ impl Config {
     /// to `config.json`; every later call reads it. A machine that cannot be
     /// measured, or cannot persist anything, falls back to the shipped
     /// constant rather than paying for a failing probe on every run.
-    pub fn ram_bandwidth(&mut self) -> f64 {
+    pub fn ram_bandwidth(&mut self, threads: usize) -> f64 {
         if let Some(measured) = self.ram_bandwidth_gb_s {
             return measured;
         }
-        let Some(measured) = crate::hardware::measure_ram_bandwidth_gb_s() else {
+        let Some(measured) = crate::hardware::measure_ram_bandwidth_gb_s(threads) else {
             return CPU_MEM_BANDWIDTH_FALLBACK_GB_S;
         };
         self.ram_bandwidth_gb_s = Some(measured);

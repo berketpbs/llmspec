@@ -179,6 +179,15 @@ tok/s ≈ bandwidth_GB/s ÷ weights_GB × efficiency
 with `efficiency` defaulting to **0.55**, covering kernel overhead, attention
 over the KV cache, and the gap between rated and achieved bandwidth.
 
+Weights that live in RAM are bound by system memory instead, and that figure
+is **measured on the machine** rather than assumed. The spread is too wide for
+a constant: a dual-channel DDR4 laptop and a DDR5 desktop differ by a factor of
+three, and no CPU model string predicts which one you have. The probe streams
+a buffer far larger than L3 from every core at once — one core cannot saturate
+a memory controller, and inference is threaded — and the result is cached in
+`config.json`, so it costs about a tenth of a second once per machine. When it
+cannot run, 60 GB/s stands in and `doctor` says so.
+
 For an unrecognised GPU there is no bandwidth figure, so a per-backend
 constant stands in:
 
