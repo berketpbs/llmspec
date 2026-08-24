@@ -346,11 +346,13 @@ impl App {
     /// A failure here is reported in the status line and otherwise ignored:
     /// losing a theme preference must never stop the TUI from exiting.
     pub fn save_config(&mut self) {
-        let config = Config {
-            theme: self.theme.index(),
-            use_case: self.target,
-            speed: PersistedSpeed::from(&self.cfg),
-        };
+        // Read, amend, write — rather than building a fresh Config. The file
+        // also holds the cached memory-bandwidth measurement, which belongs to
+        // the machine and must survive a theme change.
+        let mut config = Config::load();
+        config.theme = self.theme.index();
+        config.use_case = self.target;
+        config.speed = PersistedSpeed::from(&self.cfg);
         if let Err(e) = config.save() {
             self.status = format!("could not save settings: {e}");
         }
@@ -799,6 +801,7 @@ pub(crate) mod tests {
             available_ram_gb: ram * 0.75,
             gpus: Vec::new(),
             backend: Backend::CpuX86,
+            ram_bandwidth_gb_s: None,
             simulated: true,
         };
         if vram > 0.0 {

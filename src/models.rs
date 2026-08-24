@@ -418,6 +418,39 @@ impl ModelDb {
     /// `qwen3-8b`, llama.cpp `Qwen3-8B-Q4_K_M.gguf`. Benchmarks arrive under
     /// those names and have to be matched to a catalog entry before the
     /// measurement can be compared with the estimate.
+    /// Resolve a runtime's model reference, falling back to its size.
+    ///
+    /// An exact tag match is always preferred. When there is none, the size
+    /// the runtime reports is the way in: `deepseek-r1:latest` names no size
+    /// at all, but Ollama knows it pulled 8.2B, and the catalog has exactly
+    /// one `deepseek-r1` entry that big. This is the common case — `:latest`
+    /// is what a plain `ollama pull` leaves behind — and without it `bench`
+    /// silently drops the comparison against the estimate that is the whole
+    /// reason to run it.
+    ///
+    /// The match must be within [`RUNTIME_SIZE_TOLERANCE`], so a 7B cannot be
+    /// mistaken for an 8B. Comparing a measurement against the wrong model's
+    /// estimate is worse than not comparing at all.
+    pub fn find_for_runtime_sized(&self, reference: &str, params_b: Option<f64>) -> Option<&Model> {
+        if let Some(exact) = self.find_for_runtime(reference) {
+            return Some(exact);
+        }
+        let reported = params_b?;
+        let family = runtime_tag_family(reference)?;
+        self.models
+            .iter()
+            .filter(|m| {
+                m.ollama
+                    .as_deref()
+                    .and_then(runtime_tag_family)
+                    .is_some_and(|f| f == family)
+            })
+            .map(|m| (m, (m.params_b - reported).abs() / reported))
+            .filter(|(_, error)| *error <= RUNTIME_SIZE_TOLERANCE)
+            .min_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(m, _)| m)
+    }
+
     pub fn find_for_runtime(&self, reference: &str) -> Option<&Model> {
         let wanted = crate::providers::normalize_model_name(reference);
         if wanted.is_empty() {
@@ -430,6 +463,24 @@ impl ModelDb {
                 || crate::providers::normalize_model_name(&m.id) == wanted
         })
     }
+}
+
+/// How far a catalog model's parameter count may sit from the one a runtime
+/// reports and still be considered the same model.
+///
+/// Deliberately tight. Neighbouring sizes in a family are typically 15% apart
+/// or more, so 2% admits rounding — Ollama's "8.2B" against a catalog 8.19B —
+/// without ever letting a 7B stand in for an 8B.
+const RUNTIME_SIZE_TOLERANCE: f64 = 0.02;
+
+/// The part of a runtime tag before the size, e.g. `deepseek-r1:8b` -> `deepseek-r1`.
+///
+/// Returns `None` for a bare name with no tag, which cannot be resolved by
+/// size because there is nothing to say which family it belongs to.
+fn runtime_tag_family(reference: &str) -> Option<String> {
+    let (family, _) = reference.trim().split_once(':')?;
+    let family = family.trim().to_ascii_lowercase();
+    (!family.is_empty()).then_some(family)
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +565,62 @@ mod tests {
 
     fn db() -> ModelDb {
         ModelDb::embedded()
+    }
+
+    #[test]
+    fn a_moving_tag_resolves_through_the_size_the_runtime_reports() {
+        let db = ModelDb::embedded();
+
+        // `:latest` is an alias and names no size, so the tag alone fails.
+        assert!(db.find_for_runtime("deepseek-r1:latest").is_none());
+
+        // Ollama knows it pulled 8.2B, and exactly one deepseek-r1 entry is
+        // that big: the 0528 Qwen3 distill, at 8.19B.
+        let found = db
+            .find_for_runtime_sized("deepseek-r1:latest", Some(8.2))
+            .expect("8.2B should resolve within the family");
+        assert_eq!(found.id, "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B");
+    }
+
+    #[test]
+    fn an_exact_tag_still_wins_over_the_size() {
+        let db = ModelDb::embedded();
+        // A deliberately wrong size must not pull the match off an exact tag.
+        let found = db
+            .find_for_runtime_sized("deepseek-r1:7b", Some(70.0))
+            .expect("the tag matches exactly");
+        assert_eq!(found.id, "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B");
+    }
+
+    #[test]
+    fn a_size_that_matches_nothing_closely_is_refused() {
+        let db = ModelDb::embedded();
+        // Between the 8B and 14B entries: comparing a measurement against the
+        // wrong model's estimate is worse than not comparing at all.
+        assert!(
+            db.find_for_runtime_sized("deepseek-r1:latest", Some(11.0))
+                .is_none()
+        );
+        // A family the catalog does not carry resolves to nothing.
+        assert!(
+            db.find_for_runtime_sized("some-private-finetune:latest", Some(8.2))
+                .is_none()
+        );
+        // And with no reported size there is nothing to resolve through.
+        assert!(
+            db.find_for_runtime_sized("deepseek-r1:latest", None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_neighbouring_size_in_the_same_family_is_not_confused_for_it() {
+        let db = ModelDb::embedded();
+        // 7.62B is the 7B entry; asking for it must not land on the 8.19B one.
+        let found = db
+            .find_for_runtime_sized("deepseek-r1:latest", Some(7.6))
+            .expect("7.6B is the Qwen 7B distill");
+        assert_eq!(found.id, "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B");
     }
 
     #[test]
