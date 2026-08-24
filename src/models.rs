@@ -568,6 +568,62 @@ mod tests {
     }
 
     #[test]
+    fn a_moving_tag_resolves_through_the_size_the_runtime_reports() {
+        let db = ModelDb::embedded();
+
+        // `:latest` is an alias and names no size, so the tag alone fails.
+        assert!(db.find_for_runtime("deepseek-r1:latest").is_none());
+
+        // Ollama knows it pulled 8.2B, and exactly one deepseek-r1 entry is
+        // that big: the 0528 Qwen3 distill, at 8.19B.
+        let found = db
+            .find_for_runtime_sized("deepseek-r1:latest", Some(8.2))
+            .expect("8.2B should resolve within the family");
+        assert_eq!(found.id, "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B");
+    }
+
+    #[test]
+    fn an_exact_tag_still_wins_over_the_size() {
+        let db = ModelDb::embedded();
+        // A deliberately wrong size must not pull the match off an exact tag.
+        let found = db
+            .find_for_runtime_sized("deepseek-r1:7b", Some(70.0))
+            .expect("the tag matches exactly");
+        assert_eq!(found.id, "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B");
+    }
+
+    #[test]
+    fn a_size_that_matches_nothing_closely_is_refused() {
+        let db = ModelDb::embedded();
+        // Between the 8B and 14B entries: comparing a measurement against the
+        // wrong model's estimate is worse than not comparing at all.
+        assert!(
+            db.find_for_runtime_sized("deepseek-r1:latest", Some(11.0))
+                .is_none()
+        );
+        // A family the catalog does not carry resolves to nothing.
+        assert!(
+            db.find_for_runtime_sized("some-private-finetune:latest", Some(8.2))
+                .is_none()
+        );
+        // And with no reported size there is nothing to resolve through.
+        assert!(
+            db.find_for_runtime_sized("deepseek-r1:latest", None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_neighbouring_size_in_the_same_family_is_not_confused_for_it() {
+        let db = ModelDb::embedded();
+        // 7.62B is the 7B entry; asking for it must not land on the 8.19B one.
+        let found = db
+            .find_for_runtime_sized("deepseek-r1:latest", Some(7.6))
+            .expect("7.6B is the Qwen 7B distill");
+        assert_eq!(found.id, "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B");
+    }
+
+    #[test]
     fn embedded_database_loads() {
         let db = db();
         assert!(

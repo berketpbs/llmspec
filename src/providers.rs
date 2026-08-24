@@ -663,13 +663,15 @@ fn parse_ollama_tags(text: &str) -> Result<Vec<InstalledModel>, String> {
 /// it does not look like a size at all.
 fn parse_parameter_size(raw: &str) -> Option<f64> {
     let trimmed = raw.trim();
-    let (digits, scale) = match trimmed.chars().last()? {
+    // A divisor rather than a multiplier: 350 / 1000 lands on the same double
+    // as the literal 0.35, where 350 * 0.001 does not.
+    let (digits, divisor) = match trimmed.chars().last()? {
         'b' | 'B' => (&trimmed[..trimmed.len() - 1], 1.0),
-        'm' | 'M' => (&trimmed[..trimmed.len() - 1], 0.001),
+        'm' | 'M' => (&trimmed[..trimmed.len() - 1], 1000.0),
         _ => (trimmed, 1.0),
     };
     let value: f64 = digits.trim().parse().ok()?;
-    (value > 0.0).then_some(value * scale)
+    (value > 0.0).then_some(value / divisor)
 }
 
 fn parse_openai_models(text: &str, provider: &str) -> Result<Vec<InstalledModel>, String> {
@@ -1053,6 +1055,33 @@ mod tests {
         assert!(index.is_empty());
         assert_eq!(index.len(), 0);
         assert!(!index.contains(Some("anything:7b"), "any/model"));
+    }
+
+    #[test]
+    fn ollama_parameter_sizes_are_parsed_and_bad_ones_refused() {
+        assert_eq!(parse_parameter_size("8.2B"), Some(8.2));
+        assert_eq!(parse_parameter_size(" 1.5b "), Some(1.5));
+        assert_eq!(parse_parameter_size("671.0B"), Some(671.0));
+        assert_eq!(parse_parameter_size("350M"), Some(0.35));
+        // No unit is still a count; anything unparseable is refused rather
+        // than guessed at, because a wrong size picks a wrong model.
+        assert_eq!(parse_parameter_size("7"), Some(7.0));
+        assert_eq!(parse_parameter_size(""), None);
+        assert_eq!(parse_parameter_size("unknown"), None);
+        assert_eq!(parse_parameter_size("0B"), None);
+    }
+
+    #[test]
+    fn the_tags_listing_carries_the_reported_parameter_count() {
+        let json = r#"{"models":[
+            {"name":"deepseek-r1:latest","size":5225376047,"modified_at":"x",
+             "details":{"parameter_size":"8.2B","quantization_level":"Q4_K_M"}},
+            {"name":"nodetails:latest","size":1,"modified_at":"y"}
+        ]}"#;
+        let models = parse_ollama_tags(json).unwrap();
+        assert_eq!(models[0].params_b, Some(8.2));
+        // A listing without details is still a usable entry.
+        assert_eq!(models[1].params_b, None);
     }
 
     #[test]
