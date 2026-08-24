@@ -870,6 +870,45 @@ mod tests {
         assert!(out.contains(top.as_str()), "expected {top} in:\n{out}");
     }
 
+    /// The status row as drawn, for a terminal of `width` columns.
+    fn status_row(app: &App, width: u16) -> String {
+        let out = screen(app, width, 30);
+        out.lines().last().unwrap().to_string()
+    }
+
+    #[test]
+    fn the_status_bar_draws_every_button_where_the_hit_test_expects_it() {
+        let app = test_app();
+        let width = 150;
+        let row = status_row(&app, width);
+
+        // Each button's label must occupy exactly the columns the click
+        // handler resolves to that button, or a click lands on the wrong one.
+        for ((label, key), (start, end, laid_out_key)) in
+            STATUS_BUTTONS.iter().zip(status_button_layout(width))
+        {
+            assert_eq!(*key, laid_out_key);
+            let drawn: String = row
+                .chars()
+                .skip(start as usize)
+                .take((end - start) as usize)
+                .collect();
+            assert_eq!(drawn, format!(" {label} "), "in row:\n{row}");
+            assert_eq!(status_button_at(width, start), Some(*key));
+        }
+    }
+
+    #[test]
+    fn the_status_bar_survives_a_terminal_too_narrow_for_it() {
+        // Buttons that do not fit are dropped, so nothing is drawn half-way
+        // off the edge while still answering clicks.
+        let app = test_app();
+        let row = status_row(&app, 60);
+        assert!(row.chars().count() <= 60);
+        assert!(row.contains("/ search"), "the first button still fits");
+        assert_eq!(status_button_at(60, 59), None);
+    }
+
     #[test]
     fn the_system_panel_reports_runtime_status() {
         let mut app = test_app();
