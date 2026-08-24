@@ -33,6 +33,19 @@ fi
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
+# The checks below see the working tree, but CI will see this commit alone.
+# Those differ whenever only some of the changed files are staged, and a
+# partial commit can fail CI even though everything here passes — which is
+# how a green working tree still produces a red X on GitHub.
+if ! git diff --quiet; then
+    echo "" >&2
+    echo "  UYARI: bazi degisiklikler staged degil - kismi commit yapiyorsun." >&2
+    echo "  Asagidaki kontroller calisma agacini test eder, CI ise sadece bu" >&2
+    echo "  commit'i. Ikisi ayni degilse CI yine kirmizi olabilir." >&2
+    git diff --name-only | sed 's/^/    staged degil: /' >&2
+    echo "" >&2
+fi
+
 # $1 human-readable check name, $2 the command that fixes it, rest: the check.
 run() {
     name=$1
