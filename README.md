@@ -7,6 +7,8 @@
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+<img src="docs/demo.gif" alt="llmspec ranking the model catalog against the detected hardware" width="900">
+
 </div>
 
 ---
