@@ -310,6 +310,13 @@ pub struct Hardware {
     pub available_ram_gb: f64,
     pub gpus: Vec<Gpu>,
     pub backend: Backend,
+    /// Measured main-memory bandwidth in GB/s, when it could be measured.
+    ///
+    /// The CPU-side counterpart of [`Gpu::bandwidth_gb_s`]: it sets the
+    /// throughput ceiling for any weights that do not fit on the card.
+    /// `None` means the fallback is in use.
+    #[serde(default)]
+    pub ram_bandwidth_gb_s: Option<f64>,
     /// True when any value was overridden via flags or the TUI simulator.
     pub simulated: bool,
 }
@@ -332,6 +339,9 @@ impl Hardware {
             available_ram_gb: 1024.0,
             gpus,
             backend,
+            // Left unmeasured on purpose: a plan must read the same on every
+            // machine, so the CPU figure is the shipped constant.
+            ram_bandwidth_gb_s: None,
             simulated: true,
         }
     }
@@ -363,6 +373,17 @@ impl Hardware {
 
     pub fn has_gpu(&self) -> bool {
         !self.gpus.is_empty() && self.total_vram_gb() > 0.0
+    }
+
+    /// Main-memory bandwidth, measured if known and assumed otherwise.
+    pub fn ram_bandwidth(&self) -> f64 {
+        self.ram_bandwidth_gb_s
+            .unwrap_or(CPU_MEM_BANDWIDTH_FALLBACK_GB_S)
+    }
+
+    /// True when [`Self::ram_bandwidth`] is a measurement rather than a guess.
+    pub fn ram_bandwidth_measured(&self) -> bool {
+        self.ram_bandwidth_gb_s.is_some()
     }
 
     /// Bandwidth of the primary (largest) GPU, when known.
@@ -431,6 +452,9 @@ impl Hardware {
             available_ram_gb,
             gpus,
             backend,
+            // Measuring costs tens of milliseconds and the answer is cached
+            // between runs, so detection leaves it to the caller to fill in.
+            ram_bandwidth_gb_s: None,
             simulated: false,
         }
     }
@@ -727,6 +751,88 @@ fn matches_vendor(name: &str, vendor: Vendor) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// System memory bandwidth
+// ---------------------------------------------------------------------------
+
+/// System-memory bandwidth (GB/s) assumed when the machine cannot be measured.
+///
+/// Roughly a dual-channel DDR4-3200 desktop: low enough not to promise
+/// throughput a slow machine cannot reach, high enough not to write off CPU
+/// inference on a fast one.
+pub const CPU_MEM_BANDWIDTH_FALLBACK_GB_S: f64 = 60.0;
+
+/// Buffer size for the bandwidth probe.
+///
+/// It has to be comfortably larger than the last-level cache or the probe
+/// measures the cache instead of main memory. 64 MiB clears every desktop and
+/// laptop L3 in circulation, including the 128 MiB V-Cache parts once the
+/// read is streaming rather than resident.
+const PROBE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Timed passes over the buffer. The fastest is kept: a pass can only be
+/// slowed by something else on the machine, never speeded up, so the best of
+/// a few is closer to the hardware than their average.
+const PROBE_PASSES: usize = 5;
+
+/// Measure how fast this machine streams from main memory, in GB/s.
+///
+/// CPU-resident inference is bandwidth-bound the same way GPU inference is, so
+/// this is the CPU-side counterpart of the GPU bandwidth table. It is measured
+/// rather than assumed because the spread across machines is enormous — a
+/// dual-channel DDR4 laptop and a DDR5 desktop differ by a factor of three,
+/// and no CPU model string reliably predicts which one you have.
+///
+/// The probe reads; it never writes. A read-only stream is what token
+/// generation actually does, and it avoids the write-allocate traffic that
+/// would make a memcpy benchmark report a number inference never sees.
+///
+/// Returns `None` if the buffer cannot be allocated, or if the result is
+/// implausible enough that a stored constant is the better answer.
+pub fn measure_ram_bandwidth_gb_s() -> Option<f64> {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    let len = PROBE_BYTES / std::mem::size_of::<u64>();
+    let mut buffer: Vec<u64> = Vec::new();
+    buffer.try_reserve_exact(len).ok()?;
+    // Distinct values, so nothing downstream can be folded into a constant.
+    buffer.extend((0..len).map(|i| i as u64));
+
+    // An untimed pass first: the timed ones must measure memory traffic, not
+    // the page faults that first touching a fresh allocation costs.
+    black_box(sum(&buffer));
+
+    let mut best = f64::INFINITY;
+    for _ in 0..PROBE_PASSES {
+        let start = Instant::now();
+        black_box(sum(&buffer));
+        let elapsed = start.elapsed().as_secs_f64();
+        if elapsed > 0.0 && elapsed < best {
+            best = elapsed;
+        }
+    }
+    if !best.is_finite() {
+        return None;
+    }
+
+    let gb_s = PROBE_BYTES as f64 / BYTES_PER_GB / best;
+    // A number outside this range means the probe measured something other
+    // than memory — a cache, or a machine descheduling us mid-pass. Refusing
+    // to answer beats reporting a figure the estimates would trust.
+    (2.0..=2000.0).contains(&gb_s).then_some(gb_s)
+}
+
+/// Sequential read of the whole buffer.
+///
+/// Written as a plain fold so the compiler is free to vectorise and prefetch
+/// it, which is exactly what the memory system does under inference too.
+fn sum(buffer: &[u64]) -> u64 {
+    buffer
+        .iter()
+        .fold(0u64, |acc, &value| acc.wrapping_add(value))
+}
+
+// ---------------------------------------------------------------------------
 // Size parsing for CLI overrides
 // ---------------------------------------------------------------------------
 
@@ -772,6 +878,30 @@ mod tests {
         assert_eq!(parse_size_gb("24").unwrap(), 24.0);
         assert!(parse_size_gb("abc").is_err());
         assert!(parse_size_gb("12X").is_err());
+    }
+
+    #[test]
+    fn the_memory_probe_reports_a_plausible_figure() {
+        let Some(measured) = measure_ram_bandwidth_gb_s() else {
+            // A machine that cannot allocate the buffer is allowed to decline;
+            // the fallback covers it. Nothing else about the test applies.
+            return;
+        };
+        assert!(
+            (2.0..=2000.0).contains(&measured),
+            "{measured} GB/s is outside anything real hardware does"
+        );
+    }
+
+    #[test]
+    fn an_unmeasured_machine_falls_back_rather_than_reporting_zero() {
+        let mut hw = Hardware::reference_cpu();
+        assert!(!hw.ram_bandwidth_measured());
+        assert_eq!(hw.ram_bandwidth(), CPU_MEM_BANDWIDTH_FALLBACK_GB_S);
+
+        hw.ram_bandwidth_gb_s = Some(93.0);
+        assert!(hw.ram_bandwidth_measured());
+        assert_eq!(hw.ram_bandwidth(), 93.0);
     }
 
     #[test]
@@ -907,6 +1037,7 @@ mod tests {
             available_ram_gb: 24.0,
             gpus: Vec::new(),
             backend: Backend::CpuX86,
+            ram_bandwidth_gb_s: None,
             simulated: false,
         };
         hw.apply_overrides(Some(24.0), None, None);

@@ -114,6 +114,21 @@ pub fn run(hw: &Hardware, db: &ModelDb, registry: &mut ProviderRegistry) -> Repo
         ),
     ));
 
+    // Every CPU and hybrid estimate divides by this number, so an assumed one
+    // is worth flagging the same way an unrecognised GPU is.
+    checks.push(if hw.ram_bandwidth_measured() {
+        Check::ok(
+            "RAM bandwidth",
+            format!("{:.0} GB/s measured", hw.ram_bandwidth()),
+        )
+    } else {
+        Check::warn(
+            "RAM bandwidth",
+            format!("{:.0} GB/s assumed", hw.ram_bandwidth()),
+            "the probe could not run or returned an implausible figure; CPU and hybrid throughput estimates are guesses on this machine",
+        )
+    });
+
     checks.extend(gpu_checks(hw));
 
     checks.push(match hw.backend {
@@ -251,6 +266,7 @@ mod tests {
             available_ram_gb: 20.0,
             gpus: Vec::new(),
             backend: Backend::CpuX86,
+            ram_bandwidth_gb_s: None,
             simulated: false,
         }
     }

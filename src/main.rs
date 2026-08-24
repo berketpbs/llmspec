@@ -209,7 +209,7 @@ struct Session {
 
 impl Session {
     fn build(cli: &Cli) -> Result<Session, String> {
-        let stored = Config::load();
+        let mut stored = Config::load();
         // An explicit `--use-case` beats the stored preference, which beats
         // the built-in default.
         let target = match &cli.use_case {
@@ -219,8 +219,12 @@ impl Session {
             None => stored.use_case,
         };
         let runtime = resolve_runtime(cli)?;
+        let mut hw = build_hardware(cli)?;
+        // Measured once per machine and cached. Every estimate for weights
+        // that spill into RAM is only as good as this figure.
+        hw.ram_bandwidth_gb_s = Some(stored.ram_bandwidth());
         Ok(Session {
-            hw: build_hardware(cli)?,
+            hw,
             db: ModelDb::load(),
             target,
             cfg: SpeedConfig {

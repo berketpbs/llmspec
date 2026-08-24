@@ -11,9 +11,6 @@ use std::fmt;
 use crate::hardware::Hardware;
 use crate::models::{BenchmarkDb, Model, Quant, UseCase, hint_list};
 
-/// Assumed system-memory bandwidth (GB/s) for CPU-resident weights.
-const CPU_MEM_BANDWIDTH_GB_S: f64 = 60.0;
-
 /// System memory bandwidth as a fraction of a typical discrete GPU's, used by
 /// the fallback throughput model when the GPU is unrecognised.
 const CPU_BANDWIDTH_RATIO: f64 = 0.2;
@@ -626,10 +623,10 @@ pub fn estimate_tps(
         // Known GPU: use its real memory bandwidth.
         (RunMode::Gpu | RunMode::Moe, Some(bw)) => bw / read_gb * cfg.efficiency,
         (RunMode::CpuGpu, Some(bw)) => {
-            let blended = resident * bw + (1.0 - resident) * CPU_MEM_BANDWIDTH_GB_S;
+            let blended = resident * bw + (1.0 - resident) * hw.ram_bandwidth();
             blended / read_gb * cfg.efficiency
         }
-        (RunMode::Cpu, _) => CPU_MEM_BANDWIDTH_GB_S / read_gb * cfg.efficiency,
+        (RunMode::Cpu, _) => hw.ram_bandwidth() / read_gb * cfg.efficiency,
         // Unknown GPU: per-backend constant, scaled by how much of the model
         // actually stays resident. System memory is roughly a fifth as fast as
         // a discrete GPU's, so spilling weights costs most of the throughput.
@@ -924,6 +921,7 @@ mod tests {
             available_ram_gb: ram,
             gpus: Vec::new(),
             backend: Backend::CpuX86,
+            ram_bandwidth_gb_s: None,
             simulated: true,
         };
         if vram > 0.0 {
@@ -1119,6 +1117,42 @@ mod tests {
             .iter()
             .position(|r| r.model_id == id)
             .expect("model present in results")
+    }
+
+    #[test]
+    fn faster_memory_raises_the_cpu_estimate_proportionally() {
+        let db = ModelDb::embedded();
+        let model = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
+        let cfg = SpeedConfig::default();
+
+        let mut slow = hw(0.0, 64.0);
+        slow.ram_bandwidth_gb_s = Some(50.0);
+        let mut fast = hw(0.0, 64.0);
+        fast.ram_bandwidth_gb_s = Some(100.0);
+
+        let slow_tps = estimate_tps(model, &slow, Quant::Q4KM, RunMode::Cpu, 0.0, &cfg);
+        let fast_tps = estimate_tps(model, &fast, Quant::Q4KM, RunMode::Cpu, 0.0, &cfg);
+
+        // CPU generation is bandwidth-bound, so doubling the bandwidth doubles
+        // the estimate. Anything else means the figure is not reaching it.
+        assert!(
+            (fast_tps / slow_tps - 2.0).abs() < 1e-9,
+            "{slow_tps} -> {fast_tps}"
+        );
+    }
+
+    #[test]
+    fn planning_ignores_the_measured_machine() {
+        // A plan describes any machine, so a fast host must not inflate it.
+        let db = ModelDb::embedded();
+        let model = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
+        let cfg = SpeedConfig::default();
+        let baseline = plan(model, Quant::Q4KM, 8192, &cfg, None);
+        assert!(baseline.tps_cpu > 0.0);
+
+        // Re-planning must give the same answer no matter what this box has.
+        let again = plan(model, Quant::Q4KM, 8192, &cfg, None);
+        assert_eq!(baseline.tps_cpu, again.tps_cpu);
     }
 
     #[test]

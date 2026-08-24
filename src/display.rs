@@ -109,6 +109,20 @@ pub fn mode_color(mode: RunMode) -> Color {
 // System summary
 // ---------------------------------------------------------------------------
 
+/// How fast this machine streams from RAM, and whether that was measured.
+///
+/// The distinction matters: a measured figure is worth trusting for CPU and
+/// hybrid placements, an assumed one is a placeholder that could be out by a
+/// factor of two either way.
+fn ram_bandwidth_note(hw: &Hardware) -> String {
+    let gb_s = format!("{:.0} GB/s", hw.ram_bandwidth());
+    if hw.ram_bandwidth_measured() {
+        gb_s
+    } else {
+        format!("{gb_s} assumed")
+    }
+}
+
 pub fn render_system(hw: &Hardware) -> String {
     let mut out = String::new();
     out.push_str(&format!("{}\n", "System".bold().underline()));
@@ -117,8 +131,10 @@ pub fn render_system(hw: &Hardware) -> String {
         hw.cpu_brand, hw.cpu_cores, hw.cpu_threads, hw.arch
     ));
     out.push_str(&format!(
-        "  RAM        {:.1} GB total, {:.1} GB available\n",
-        hw.total_ram_gb, hw.available_ram_gb
+        "  RAM        {:.1} GB total, {:.1} GB available, {}\n",
+        hw.total_ram_gb,
+        hw.available_ram_gb,
+        ram_bandwidth_note(hw)
     ));
     if hw.gpus.is_empty() {
         out.push_str(&format!("  GPU        {}\n", "none detected".yellow()));
