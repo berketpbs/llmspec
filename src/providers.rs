@@ -234,6 +234,12 @@ pub struct InstalledModel {
     pub provider: String,
     pub size_bytes: u64,
     pub modified_at: String,
+    /// Parameter count in billions, when the runtime reports one.
+    ///
+    /// Ollama knows what it actually pulled even when the tag does not say —
+    /// `deepseek-r1:latest` is an alias, `8.2B` is a fact — and that is what
+    /// lets a moving tag be resolved to a catalog entry.
+    pub params_b: Option<f64>,
 }
 
 impl InstalledModel {
@@ -572,6 +578,15 @@ struct TagEntry {
     size: u64,
     #[serde(default)]
     modified_at: String,
+    #[serde(default)]
+    details: Option<TagDetails>,
+}
+
+#[derive(Deserialize)]
+struct TagDetails {
+    /// Ollama writes this as a human string: "8.2B", "1.5B", "70.6B".
+    #[serde(default)]
+    parameter_size: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -632,8 +647,29 @@ fn parse_ollama_tags(text: &str) -> Result<Vec<InstalledModel>, String> {
             provider: "ollama".to_string(),
             size_bytes: t.size,
             modified_at: t.modified_at,
+            params_b: t
+                .details
+                .and_then(|d| d.parameter_size)
+                .as_deref()
+                .and_then(parse_parameter_size),
         })
         .collect())
+}
+
+/// Parse Ollama's `parameter_size` string into billions of parameters.
+///
+/// The field is written for people — "8.2B", "1.5B", "70.6B", occasionally
+/// "350M" — so it is parsed leniently and refused rather than guessed at when
+/// it does not look like a size at all.
+fn parse_parameter_size(raw: &str) -> Option<f64> {
+    let trimmed = raw.trim();
+    let (digits, scale) = match trimmed.chars().last()? {
+        'b' | 'B' => (&trimmed[..trimmed.len() - 1], 1.0),
+        'm' | 'M' => (&trimmed[..trimmed.len() - 1], 0.001),
+        _ => (trimmed, 1.0),
+    };
+    let value: f64 = digits.trim().parse().ok()?;
+    (value > 0.0).then_some(value * scale)
 }
 
 fn parse_openai_models(text: &str, provider: &str) -> Result<Vec<InstalledModel>, String> {
@@ -645,9 +681,11 @@ fn parse_openai_models(text: &str, provider: &str) -> Result<Vec<InstalledModel>
         .map(|m| InstalledModel {
             name: m.id,
             provider: provider.to_string(),
-            // The OpenAI model listing carries no size field.
+            // The OpenAI model listing carries neither a size nor a parameter
+            // count, so a tag is all there is to match on for these runtimes.
             size_bytes: 0,
             modified_at: m.created.map(|c| c.to_string()).unwrap_or_default(),
+            params_b: None,
         })
         .collect())
 }
@@ -986,12 +1024,14 @@ mod tests {
                 provider: "ollama".into(),
                 size_bytes: 0,
                 modified_at: String::new(),
+                params_b: None,
             },
             InstalledModel {
                 name: "phi-4-mini-instruct".into(),
                 provider: "lmstudio".into(),
                 size_bytes: 0,
                 modified_at: String::new(),
+                params_b: None,
             },
         ]);
 
@@ -1022,6 +1062,7 @@ mod tests {
             provider: "ollama".to_string(),
             size_bytes: 1024 * 1024 * 1024,
             modified_at: String::new(),
+            params_b: None,
         };
         assert!((model.size_gb() - 1.0).abs() < 0.01);
     }

@@ -418,6 +418,39 @@ impl ModelDb {
     /// `qwen3-8b`, llama.cpp `Qwen3-8B-Q4_K_M.gguf`. Benchmarks arrive under
     /// those names and have to be matched to a catalog entry before the
     /// measurement can be compared with the estimate.
+    /// Resolve a runtime's model reference, falling back to its size.
+    ///
+    /// An exact tag match is always preferred. When there is none, the size
+    /// the runtime reports is the way in: `deepseek-r1:latest` names no size
+    /// at all, but Ollama knows it pulled 8.2B, and the catalog has exactly
+    /// one `deepseek-r1` entry that big. This is the common case — `:latest`
+    /// is what a plain `ollama pull` leaves behind — and without it `bench`
+    /// silently drops the comparison against the estimate that is the whole
+    /// reason to run it.
+    ///
+    /// The match must be within [`RUNTIME_SIZE_TOLERANCE`], so a 7B cannot be
+    /// mistaken for an 8B. Comparing a measurement against the wrong model's
+    /// estimate is worse than not comparing at all.
+    pub fn find_for_runtime_sized(&self, reference: &str, params_b: Option<f64>) -> Option<&Model> {
+        if let Some(exact) = self.find_for_runtime(reference) {
+            return Some(exact);
+        }
+        let reported = params_b?;
+        let family = runtime_tag_family(reference)?;
+        self.models
+            .iter()
+            .filter(|m| {
+                m.ollama
+                    .as_deref()
+                    .and_then(runtime_tag_family)
+                    .is_some_and(|f| f == family)
+            })
+            .map(|m| (m, (m.params_b - reported).abs() / reported))
+            .filter(|(_, error)| *error <= RUNTIME_SIZE_TOLERANCE)
+            .min_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(m, _)| m)
+    }
+
     pub fn find_for_runtime(&self, reference: &str) -> Option<&Model> {
         let wanted = crate::providers::normalize_model_name(reference);
         if wanted.is_empty() {
@@ -430,6 +463,24 @@ impl ModelDb {
                 || crate::providers::normalize_model_name(&m.id) == wanted
         })
     }
+}
+
+/// How far a catalog model's parameter count may sit from the one a runtime
+/// reports and still be considered the same model.
+///
+/// Deliberately tight. Neighbouring sizes in a family are typically 15% apart
+/// or more, so 2% admits rounding — Ollama's "8.2B" against a catalog 8.19B —
+/// without ever letting a 7B stand in for an 8B.
+const RUNTIME_SIZE_TOLERANCE: f64 = 0.02;
+
+/// The part of a runtime tag before the size, e.g. `deepseek-r1:8b` -> `deepseek-r1`.
+///
+/// Returns `None` for a bare name with no tag, which cannot be resolved by
+/// size because there is nothing to say which family it belongs to.
+fn runtime_tag_family(reference: &str) -> Option<String> {
+    let (family, _) = reference.trim().split_once(':')?;
+    let family = family.trim().to_ascii_lowercase();
+    (!family.is_empty()).then_some(family)
 }
 
 // ---------------------------------------------------------------------------
