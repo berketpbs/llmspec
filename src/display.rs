@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::bench::BenchReport;
 use crate::doctor::{Report, Severity};
-use crate::fit::{FitLevel, FitResult, HardwarePlan, RunMode};
+use crate::fit::{FitLevel, FitResult, HardwarePlan, RunMode, TargetPlan};
 use crate::hardware::Hardware;
 use crate::models::Model;
 use crate::providers::{DiscoveredRuntime, RuntimeKind};
@@ -432,19 +432,59 @@ pub fn render_plan(plan: &HardwarePlan) -> String {
         &format!("{:.1} GB to run it on the CPU instead", plan.min_ram_gb),
     ));
 
-    out.push_str(&format!("\n{}\n", "Estimated throughput".bold()));
+    // The GPU figure means nothing without the card it assumes, and naming it
+    // in the heading avoids an article that would have to agree with it.
+    out.push_str(&format!(
+        "\n{} {}\n",
+        "Estimated throughput".bold(),
+        format!("(reference: {})", plan.reference_gpu).bright_black()
+    ));
     out.push_str(&row(
-        "On a fast GPU",
+        "On the GPU",
         &format!("~{} tok/s", format_tps(plan.tps_gpu)),
     ));
     out.push_str(&row(
-        "On this CPU",
+        "On the CPU",
         &format!("~{} tok/s", format_tps(plan.tps_cpu)),
     ));
 
     out.push_str(&format!("\n{}\n", "Viable run modes".bold()));
     out.push_str(&row("Modes", &plan.viable_modes.join(", ")));
+
+    if let Some(target) = &plan.target {
+        out.push_str(&format!(
+            "\n{}\n",
+            format!("To reach {} tok/s", format_tps(target.target_tps)).bold()
+        ));
+        out.push_str(&row(
+            "Bandwidth",
+            &format!(
+                "{:.0} GB/s of memory bandwidth",
+                target.required_bandwidth_gb_s
+            ),
+        ));
+        out.push_str(&row("Cards", &render_target_gpus(target)));
+    }
     out
+}
+
+/// The cards that reach a target, or an honest sentence when none do.
+///
+/// Only the first few are named: the list is ordered least-sufficient first,
+/// so the head of it is the answer and the tail is just everything faster.
+fn render_target_gpus(target: &TargetPlan) -> String {
+    const NAMED: usize = 4;
+
+    if target.gpus.is_empty() {
+        return "nothing in the reference table is fast enough"
+            .yellow()
+            .to_string();
+    }
+    let shown = target.gpus.iter().take(NAMED).copied().collect::<Vec<_>>();
+    match target.gpus.len().saturating_sub(shown.len()) {
+        0 => shown.join(", "),
+        rest => format!("{}, +{rest} faster", shown.join(", ")),
+    }
 }
 
 fn bar(label: &str, score: f64) -> String {
@@ -786,7 +826,7 @@ mod tests {
 
         let db = ModelDb::embedded();
         let model = db.find("meta-llama/Llama-3.3-70B-Instruct").unwrap();
-        let plan = plan(model, Quant::Q4KM, 32_768, &SpeedConfig::default());
+        let plan = plan(model, Quant::Q4KM, 32_768, &SpeedConfig::default(), None);
         let out = render_plan(&plan);
 
         // Debug formatting would print "Q4KM", which is not a quantization
@@ -795,6 +835,10 @@ mod tests {
         assert!(!out.contains("Q4KM"), "{out}");
         assert!(out.contains("Weights") && out.contains("KV cache"));
         assert!(out.contains("Minimum VRAM") && out.contains("Minimum RAM"));
+        // The throughput figure is meaningless without the card it assumes.
+        assert!(out.contains(plan.reference_gpu), "{out}");
+        // Nothing was asked for, so nothing about a target is claimed.
+        assert!(!out.contains("To reach"), "{out}");
         // Labels must not run into their values.
         for line in out
             .lines()
@@ -802,6 +846,61 @@ mod tests {
         {
             assert!(line.contains("   "), "label and value collided: {line:?}");
         }
+    }
+
+    #[test]
+    fn a_throughput_target_names_the_bandwidth_and_the_cards_that_have_it() {
+        use crate::fit::{SpeedConfig, plan};
+        use crate::models::{ModelDb, Quant};
+
+        let db = ModelDb::embedded();
+        let model = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
+        let cfg = SpeedConfig::default();
+        let at_40 = plan(model, Quant::Q4KM, 8192, &cfg, Some(40.0));
+        let target = at_40.target.as_ref().expect("a target was asked for");
+        let out = render_plan(&at_40);
+
+        assert!(out.contains("To reach"), "{out}");
+        assert!(out.contains("GB/s of memory bandwidth"), "{out}");
+        // An 8B model at Q4_K_M reads well under 5 GB per token, so 40 tok/s
+        // is within reach of ordinary cards rather than datacenter parts.
+        assert!(
+            target.required_bandwidth_gb_s < 400.0,
+            "{} GB/s",
+            target.required_bandwidth_gb_s
+        );
+        assert!(!target.gpus.is_empty(), "{target:?}");
+        assert!(out.contains(target.gpus[0]), "{out}");
+
+        // Ten times the throughput needs ten times the bandwidth.
+        let faster = plan(model, Quant::Q4KM, 8192, &cfg, Some(400.0));
+        let faster = faster.target.expect("a target was asked for");
+        assert!(
+            (faster.required_bandwidth_gb_s / target.required_bandwidth_gb_s - 10.0).abs() < 1e-6,
+            "{faster:?}"
+        );
+    }
+
+    #[test]
+    fn an_unreachable_target_says_so_instead_of_naming_nothing() {
+        use crate::fit::{SpeedConfig, plan};
+        use crate::models::{ModelDb, Quant};
+
+        let db = ModelDb::embedded();
+        let model = db.find("meta-llama/Llama-3.3-70B-Instruct").unwrap();
+        let plan = plan(
+            model,
+            Quant::Q4KM,
+            8192,
+            &SpeedConfig::default(),
+            Some(5000.0),
+        );
+        assert!(plan.target.as_ref().unwrap().gpus.is_empty());
+        assert!(
+            render_plan(&plan).contains("nothing in the reference table"),
+            "{}",
+            render_plan(&plan)
+        );
     }
 
     #[test]

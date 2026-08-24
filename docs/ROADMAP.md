@@ -17,6 +17,7 @@ only about scope.
 - Mixture-of-experts expert offloading
 - Exact KV-cache sizing from model geometry, with a heuristic fallback
 - Hardware planning — what a given model would need from any machine
+- Throughput targets — the bandwidth and the cards a wanted tok/s implies
 
 **Hardware**
 

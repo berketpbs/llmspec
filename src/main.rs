@@ -177,7 +177,7 @@ enum Command {
         /// Quantization level (default: q4_k_m)
         #[arg(long, value_name = "QUANT")]
         quant: Option<String>,
-        /// Target tokens/sec (for planning reverse)
+        /// Also report the bandwidth and cards needed to reach this many tokens/sec
         #[arg(long, value_name = "TPS")]
         target_tps: Option<f64>,
     },
@@ -191,251 +191,358 @@ fn main() {
     }
 }
 
+/// Everything the commands share, resolved once from the flags and the
+/// stored configuration.
+///
+/// The handlers below take this rather than a dozen loose arguments, and the
+/// two that own the process for the rest of its life — `serve` and the TUI —
+/// take it by value.
+struct Session {
+    hw: Hardware,
+    db: ModelDb,
+    /// Use case the scores are weighted for.
+    target: UseCase,
+    cfg: SpeedConfig,
+    /// `--force-runtime`, which narrows the catalog and shifts the estimate.
+    runtime: Option<RuntimeKind>,
+}
+
+impl Session {
+    fn build(cli: &Cli) -> Result<Session, String> {
+        let stored = Config::load();
+        // An explicit `--use-case` beats the stored preference, which beats
+        // the built-in default.
+        let target = match &cli.use_case {
+            Some(raw) => {
+                UseCase::parse(raw).ok_or_else(|| unknown("use case", raw, &UseCase::hint()))?
+            }
+            None => stored.use_case,
+        };
+        let runtime = resolve_runtime(cli)?;
+        Ok(Session {
+            hw: build_hardware(cli)?,
+            db: ModelDb::load(),
+            target,
+            cfg: SpeedConfig {
+                context_cap: resolve_context_cap(cli),
+                // A forced runtime shifts the throughput estimate: MLX and
+                // vLLM read the same weights faster than a GGUF loader does.
+                gpu_factor: stored.speed.gpu_factor
+                    * runtime.map_or(1.0, RuntimeKind::speed_factor),
+                ..stored.speed.apply_to(&SpeedConfig::default())
+            },
+            runtime,
+        })
+    }
+
+    /// Rank the models a forced runtime could actually load.
+    fn analyze(&self, models: &[models::Model]) -> Vec<FitResult> {
+        fit::analyze_all(models, &self.hw, self.target, &self.cfg)
+    }
+
+    /// Look one model up by the words the user typed.
+    fn find(&self, words: &[String]) -> Result<&models::Model, String> {
+        let query = words.join(" ");
+        self.db
+            .find(&query)
+            .ok_or_else(|| format!("no model matches '{query}'"))
+    }
+}
+
 fn run(cli: Cli) -> Result<(), String> {
-    let hw = build_hardware(&cli)?;
-    let db = ModelDb::load();
-    let stored = Config::load();
-    // An explicit `--use-case` beats the stored preference, which beats the
-    // built-in default.
-    let target = match &cli.use_case {
-        Some(raw) => UseCase::parse(raw)
-            .ok_or_else(|| format!("unknown use case '{raw}' (try: general, coding, reasoning, chat, multimodal, embedding)"))?,
-        None => stored.use_case,
-    };
-    let runtime = resolve_runtime(&cli)?;
-    let cfg = SpeedConfig {
-        context_cap: resolve_context_cap(&cli),
-        // A forced runtime shifts the throughput estimate: MLX and vLLM read
-        // the same weights faster than a GGUF loader does.
-        gpu_factor: stored.speed.gpu_factor * runtime.map_or(1.0, RuntimeKind::speed_factor),
-        ..stored.speed.apply_to(&SpeedConfig::default())
-    };
-
+    let session = Session::build(&cli)?;
     match &cli.command {
-        Some(Command::System) => {
-            if cli.json {
-                println!("{}", display::to_json(&hw));
-            } else {
-                print!("{}", display::render_system(&hw));
-            }
-        }
-
-        Some(Command::List) => {
-            if cli.json {
-                println!("{}", display::to_json(&db.models));
-            } else {
-                print!("{}", display::render_model_list(&db.models));
-                println!(
-                    "\n{} models in database (schema v{}, source: {})",
-                    db.len(),
-                    db.schema_version,
-                    db.source
-                );
-            }
-        }
-
-        Some(Command::Search { query, limit }) => {
-            let q = query.join(" ");
-            let matched: Vec<_> = db
-                .models
-                .iter()
-                .filter(|m| m.matches(&q))
-                .cloned()
-                .collect();
-            if matched.is_empty() {
-                return Err(format!("no model matches '{q}'"));
-            }
-            let mut results = fit::analyze_all(&matched, &hw, target, &cfg);
-            truncate_results(&mut results, *limit);
-            emit_results(&cli, &hw, target, &results);
-        }
-
-        Some(Command::Info { model }) => {
-            let q = model.join(" ");
-            let found = db
-                .find(&q)
-                .ok_or_else(|| format!("no model matches '{q}'"))?;
-            let result = fit::analyze(found, &hw, target, &cfg);
-            if cli.json {
-                println!("{}", display::to_json(&result));
-            } else {
-                print!(
-                    "{}",
-                    display::render_detail(
-                        &result,
-                        found,
-                        Some(suggested_runtime(runtime, &result))
-                    )
-                );
-            }
-        }
-
-        Some(Command::Fit {
-            perfect,
-            min_fit,
-            runnable,
-            provider,
-            quant,
-            mode,
-            min_tps,
-            max_size,
-            min_context,
-            limit,
-        }) => {
-            let mut results = fit::analyze_all(&catalog_for(&db, runtime), &hw, target, &cfg);
-            if let Some(name) = provider {
-                let needle = name.to_ascii_lowercase();
-                results.retain(|r| r.provider.to_ascii_lowercase().contains(&needle));
-            }
-            if let Some(raw) = quant {
-                let wanted = Quant::parse(raw)
-                    .ok_or_else(|| format!("unknown quantization '{raw}' (try: q8_0, q6_k, q5_k_m, q4_k_m, q3_k_m, q2_k)"))?;
-                results.retain(|r| r.quant == wanted);
-            }
-            if let Some(raw) = mode {
-                let wanted = RunMode::parse(raw).ok_or_else(|| {
-                    format!("unknown run mode '{raw}' (try: gpu, moe, cpu+gpu, cpu)")
-                })?;
-                results.retain(|r| r.mode == wanted);
-            }
-            // Practical thresholds: how fast it has to be, how much disk it
-            // may take, and how much context it has to hold.
-            if let Some(floor) = min_tps {
-                results.retain(|r| r.tokens_per_second >= *floor);
-            }
-            if let Some(raw) = max_size {
-                let ceiling = parse_size_gb(raw)?;
-                results.retain(|r| r.download_gb <= ceiling);
-            }
-            if let Some(floor) = min_context {
-                results.retain(|r| r.context >= *floor);
-            }
-            let floor = resolve_min_fit(*perfect, *runnable, min_fit.as_deref())?;
-            if let Some(floor) = floor {
-                results.retain(|r| r.fit >= floor);
-            }
-            truncate_results(&mut results, *limit);
-            emit_results(&cli, &hw, target, &results);
-        }
-
-        Some(Command::Recommend { limit, table }) => {
-            let mut results = fit::analyze_all(&catalog_for(&db, runtime), &hw, target, &cfg);
-            results.retain(FitResult::is_runnable);
-            truncate_results(&mut results, Some(*limit));
-            // `recommend` defaults to JSON; `--table` opts back into text.
-            if *table && !cli.json {
-                print!("{}", display::render_table(&results));
-            } else {
-                print!("{}", report_json(&hw, target, &results));
-                println!();
-            }
-        }
-
-        Some(Command::Doctor) => {
-            let mut registry = ProviderRegistry::new();
-            let report = doctor::run(&hw, &db, &mut registry);
-            if cli.json {
-                println!("{}", display::to_json(&report));
-            } else {
-                print!("{}", display::render_doctor(&report));
-            }
-            // A clean report exits 0; warnings are worth a non-zero status so
-            // a CI check can gate on detection actually having worked.
-            if !report.is_clean() {
-                std::process::exit(2);
-            }
-        }
-
-        Some(Command::Runtimes) => {
-            let mut registry = ProviderRegistry::new();
-            let found = registry.discover();
-            if cli.json {
-                println!("{}", display::to_json(&found));
-            } else {
-                print!("{}", display::render_runtimes(&found));
-            }
-        }
-
+        Some(Command::System) => cmd_system(&cli, &session),
+        Some(Command::List) => cmd_list(&cli, &session),
+        Some(Command::Search { query, limit }) => cmd_search(&cli, &session, query, *limit),
+        Some(Command::Info { model }) => cmd_info(&cli, &session, model),
+        Some(Command::Fit { .. }) => cmd_fit(&cli, &session),
+        Some(Command::Recommend { limit, table }) => cmd_recommend(&cli, &session, *limit, *table),
+        Some(Command::Doctor) => cmd_doctor(&cli, &session),
+        Some(Command::Runtimes) => cmd_runtimes(&cli),
         Some(Command::Bench {
             model,
             all,
             runs,
             tokens,
-        }) => {
-            let mut registry = ProviderRegistry::new();
-            let discovered = bench::select_runtime(&mut registry, runtime)?;
-            let client = Runtime::with_url(discovered.kind, &discovered.base_url);
-
-            let targets = bench_targets(&client, &model.join(" "), *all)?;
-            let mut results = Vec::new();
-            for model_ref in &targets {
-                if !cli.json {
-                    eprintln!(
-                        "benchmarking {model_ref} on {} ({} runs)...",
-                        discovered.name, runs
-                    );
-                }
-                let mut result = bench::run_one(&client, model_ref, *runs, *tokens)?;
-                // Compare against what llmspec would have predicted, when the
-                // runtime's name for the model resolves to a catalog entry.
-                if let Some(found) = db.find_for_runtime(model_ref) {
-                    let analysis = fit::analyze(found, &hw, target, &cfg);
-                    let weights_gb = found.weights_gb(analysis.quant);
-                    bench::attach_estimate(&mut result, &analysis, weights_gb);
-                }
-                results.push(result);
-            }
-
-            let report =
-                bench::BenchReport::new(bench::HardwareSummary::from(&hw), results, cfg.efficiency);
-            if cli.json {
-                println!("{}", display::to_json(&report));
-            } else {
-                print!("{}", display::render_bench(&report));
-            }
-        }
-
-        Some(Command::Serve { host, port }) => {
-            let mut server = serve::Server::new(hw, db, cfg, target);
-            server.listen(host, *port)?;
-        }
-
+        }) => cmd_bench(&cli, &session, model, *all, *runs, *tokens),
         Some(Command::Plan {
             model,
             context,
             quant,
-            target_tps: _,
-        }) => {
-            let q = model.join(" ");
-            let found = db
-                .find(&q)
-                .ok_or_else(|| format!("no model matches '{q}'"))?;
-            let ctx = context.unwrap_or(found.context_length);
-            let quant_level = match quant.as_deref() {
-                Some(raw) => Quant::parse(raw)
-                    .ok_or_else(|| format!("unknown quantization '{raw}' (try: q8_0, q6_k, q5_k_m, q4_k_m, q3_k_m, q2_k)"))?,
-                None => Quant::Q4KM,
-            };
-            let plan = fit::plan(found, quant_level, ctx, &cfg);
-            if cli.json {
-                println!("{}", display::to_json(&plan));
-            } else {
-                print!("{}", display::render_plan(&plan));
-            }
-        }
+            target_tps,
+        }) => cmd_plan(
+            &cli,
+            &session,
+            model,
+            *context,
+            quant.as_deref(),
+            *target_tps,
+        ),
+        Some(Command::Serve { host, port }) => cmd_serve(session, host, *port),
+        None => cmd_default(&cli, session),
+    }
+}
 
-        None => {
-            if cli.cli || cli.json {
-                let results = fit::analyze_all(&catalog_for(&db, runtime), &hw, target, &cfg);
-                emit_results(&cli, &hw, target, &results);
-            } else {
-                let mut app = tui_app::App::new(hw, db, target, cfg);
-                tui_events::run(&mut app).map_err(|e| format!("terminal error: {e}"))?;
-            }
+fn cmd_system(cli: &Cli, session: &Session) -> Result<(), String> {
+    if cli.json {
+        println!("{}", display::to_json(&session.hw));
+    } else {
+        print!("{}", display::render_system(&session.hw));
+    }
+    Ok(())
+}
+
+fn cmd_list(cli: &Cli, session: &Session) -> Result<(), String> {
+    let db = &session.db;
+    if cli.json {
+        println!("{}", display::to_json(&db.models));
+    } else {
+        print!("{}", display::render_model_list(&db.models));
+        println!(
+            "\n{} models in database (schema v{}, source: {})",
+            db.len(),
+            db.schema_version,
+            db.source
+        );
+    }
+    Ok(())
+}
+
+fn cmd_search(
+    cli: &Cli,
+    session: &Session,
+    query: &[String],
+    limit: Option<usize>,
+) -> Result<(), String> {
+    let query = query.join(" ");
+    let matched: Vec<_> = session
+        .db
+        .models
+        .iter()
+        .filter(|m| m.matches(&query))
+        .cloned()
+        .collect();
+    if matched.is_empty() {
+        return Err(format!("no model matches '{query}'"));
+    }
+    let mut results = session.analyze(&matched);
+    truncate_results(&mut results, limit);
+    emit_results(cli, session, &results);
+    Ok(())
+}
+
+fn cmd_info(cli: &Cli, session: &Session, model: &[String]) -> Result<(), String> {
+    let found = session.find(model)?;
+    let result = fit::analyze(found, &session.hw, session.target, &session.cfg);
+    if cli.json {
+        println!("{}", display::to_json(&result));
+    } else {
+        let runtime = suggested_runtime(session.runtime, &result);
+        print!("{}", display::render_detail(&result, found, Some(runtime)));
+    }
+    Ok(())
+}
+
+fn cmd_fit(cli: &Cli, session: &Session) -> Result<(), String> {
+    let Some(Command::Fit {
+        perfect,
+        min_fit,
+        runnable,
+        provider,
+        quant,
+        mode,
+        min_tps,
+        max_size,
+        min_context,
+        limit,
+    }) = &cli.command
+    else {
+        unreachable!("cmd_fit is only reached from the Fit arm");
+    };
+
+    let mut results = session.analyze(&catalog_for(&session.db, session.runtime));
+    if let Some(name) = provider {
+        let needle = name.to_ascii_lowercase();
+        results.retain(|r| r.provider.to_ascii_lowercase().contains(&needle));
+    }
+    if let Some(raw) = quant {
+        let wanted = parse_quant(raw)?;
+        results.retain(|r| r.quant == wanted);
+    }
+    if let Some(raw) = mode {
+        let wanted =
+            RunMode::parse(raw).ok_or_else(|| unknown("run mode", raw, &RunMode::hint()))?;
+        results.retain(|r| r.mode == wanted);
+    }
+    // Practical thresholds: how fast it has to be, how much disk it may take,
+    // and how much context it has to hold.
+    if let Some(floor) = min_tps {
+        results.retain(|r| r.tokens_per_second >= *floor);
+    }
+    if let Some(raw) = max_size {
+        let ceiling = parse_size_gb(raw)?;
+        results.retain(|r| r.download_gb <= ceiling);
+    }
+    if let Some(floor) = min_context {
+        results.retain(|r| r.context >= *floor);
+    }
+    if let Some(floor) = resolve_min_fit(*perfect, *runnable, min_fit.as_deref())? {
+        results.retain(|r| r.fit >= floor);
+    }
+    truncate_results(&mut results, *limit);
+    emit_results(cli, session, &results);
+    Ok(())
+}
+
+fn cmd_recommend(cli: &Cli, session: &Session, limit: usize, table: bool) -> Result<(), String> {
+    let mut results = session.analyze(&catalog_for(&session.db, session.runtime));
+    results.retain(FitResult::is_runnable);
+    truncate_results(&mut results, Some(limit));
+    // `recommend` defaults to JSON; `--table` opts back into text.
+    if table && !cli.json {
+        print!("{}", display::render_table(&results));
+    } else {
+        print!("{}", report_json(session, &results));
+        println!();
+    }
+    Ok(())
+}
+
+fn cmd_doctor(cli: &Cli, session: &Session) -> Result<(), String> {
+    let mut registry = ProviderRegistry::new();
+    let report = doctor::run(&session.hw, &session.db, &mut registry);
+    if cli.json {
+        println!("{}", display::to_json(&report));
+    } else {
+        print!("{}", display::render_doctor(&report));
+    }
+    // A clean report exits 0; warnings are worth a non-zero status so a CI
+    // check can gate on detection actually having worked.
+    if report.is_clean() {
+        Ok(())
+    } else {
+        std::process::exit(2);
+    }
+}
+
+fn cmd_runtimes(cli: &Cli) -> Result<(), String> {
+    let found = ProviderRegistry::new().discover();
+    if cli.json {
+        println!("{}", display::to_json(&found));
+    } else {
+        print!("{}", display::render_runtimes(&found));
+    }
+    Ok(())
+}
+
+fn cmd_bench(
+    cli: &Cli,
+    session: &Session,
+    model: &[String],
+    all: bool,
+    runs: usize,
+    tokens: Option<u32>,
+) -> Result<(), String> {
+    let mut registry = ProviderRegistry::new();
+    let discovered = bench::select_runtime(&mut registry, session.runtime)?;
+    let client = Runtime::with_url(discovered.kind, &discovered.base_url);
+
+    let targets = bench_targets(&client, &model.join(" "), all)?;
+    let mut results = Vec::new();
+    for model_ref in &targets {
+        if !cli.json {
+            eprintln!(
+                "benchmarking {model_ref} on {} ({runs} runs)...",
+                discovered.name
+            );
         }
+        let mut result = bench::run_one(&client, model_ref, runs, tokens)?;
+        // Compare against what llmspec would have predicted, when the
+        // runtime's name for the model resolves to a catalog entry.
+        if let Some(found) = session.db.find_for_runtime(model_ref) {
+            let analysis = fit::analyze(found, &session.hw, session.target, &session.cfg);
+            let weights_gb = found.weights_gb(analysis.quant);
+            bench::attach_estimate(&mut result, &analysis, weights_gb);
+        }
+        results.push(result);
     }
 
+    let report = bench::BenchReport::new(
+        bench::HardwareSummary::from(&session.hw),
+        results,
+        session.cfg.efficiency,
+    );
+    if cli.json {
+        println!("{}", display::to_json(&report));
+    } else {
+        print!("{}", display::render_bench(&report));
+    }
     Ok(())
+}
+
+fn cmd_plan(
+    cli: &Cli,
+    session: &Session,
+    model: &[String],
+    context: Option<u32>,
+    quant: Option<&str>,
+    target_tps: Option<f64>,
+) -> Result<(), String> {
+    let found = session.find(model)?;
+    let context = context.unwrap_or(found.context_length);
+    let quant = match quant {
+        Some(raw) => parse_quant(raw)?,
+        None => Quant::Q4KM,
+    };
+    let plan = fit::plan(found, quant, context, &session.cfg, target_tps);
+    if cli.json {
+        println!("{}", display::to_json(&plan));
+    } else {
+        print!("{}", display::render_plan(&plan));
+    }
+    Ok(())
+}
+
+fn cmd_serve(session: Session, host: &str, port: u16) -> Result<(), String> {
+    let Session {
+        hw,
+        db,
+        cfg,
+        target,
+        ..
+    } = session;
+    serve::Server::new(hw, db, cfg, target).listen(host, port)
+}
+
+/// No subcommand: the TUI, unless output was asked for in text or JSON.
+fn cmd_default(cli: &Cli, session: Session) -> Result<(), String> {
+    if cli.cli || cli.json {
+        let results = session.analyze(&catalog_for(&session.db, session.runtime));
+        emit_results(cli, &session, &results);
+        return Ok(());
+    }
+    let Session {
+        hw,
+        db,
+        target,
+        cfg,
+        ..
+    } = session;
+    let mut app = tui_app::App::new(hw, db, target, cfg);
+    tui_events::run(&mut app).map_err(|e| format!("terminal error: {e}"))
+}
+
+/// The one shape every "you typed something I don't know" error takes.
+///
+/// The accepted spellings come from the enums themselves, so a new variant
+/// cannot leave a stale list behind in an error message.
+fn unknown(what: &str, given: &str, accepted: &str) -> String {
+    format!("unknown {what} '{given}' (try: {accepted})")
+}
+
+fn parse_quant(raw: &str) -> Result<Quant, String> {
+    Quant::parse(raw).ok_or_else(|| unknown("quantization", raw, &Quant::hint()))
 }
 
 fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
@@ -449,14 +556,9 @@ fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
 fn resolve_runtime(cli: &Cli) -> Result<Option<RuntimeKind>, String> {
     match &cli.force_runtime {
         None => Ok(None),
-        Some(raw) => RuntimeKind::parse(raw).map(Some).ok_or_else(|| {
-            let known = RuntimeKind::ALL
-                .iter()
-                .map(|k| k.slug())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("unknown runtime '{raw}' (try: {known})")
-        }),
+        Some(raw) => RuntimeKind::parse(raw)
+            .map(Some)
+            .ok_or_else(|| unknown("runtime", raw, &RuntimeKind::hint())),
     }
 }
 
@@ -531,9 +633,9 @@ fn resolve_min_fit(
         return Ok(Some(FitLevel::Perfect));
     }
     if let Some(raw) = min_fit {
-        return FitLevel::parse(raw).map(Some).ok_or_else(|| {
-            format!("unknown fit level '{raw}' (try: perfect, good, marginal, too_tight)")
-        });
+        return FitLevel::parse(raw)
+            .map(Some)
+            .ok_or_else(|| unknown("fit level", raw, &FitLevel::hint()));
     }
     if runnable {
         return Ok(Some(FitLevel::Marginal));
@@ -547,19 +649,19 @@ fn truncate_results(results: &mut Vec<FitResult>, limit: Option<usize>) {
     }
 }
 
-fn emit_results(cli: &Cli, hw: &Hardware, target: UseCase, results: &[FitResult]) {
+fn emit_results(cli: &Cli, session: &Session, results: &[FitResult]) {
     if cli.json {
-        print!("{}", report_json(hw, target, results));
+        print!("{}", report_json(session, results));
         println!();
     } else {
         print!("{}", display::render_table(results));
     }
 }
 
-fn report_json(hw: &Hardware, target: UseCase, results: &[FitResult]) -> String {
+fn report_json(session: &Session, results: &[FitResult]) -> String {
     display::to_json(&display::JsonReport {
-        system: hw,
-        use_case: target.as_str(),
+        system: &session.hw,
+        use_case: session.target.as_str(),
         count: results.len(),
         models: results,
     })

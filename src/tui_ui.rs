@@ -437,7 +437,7 @@ fn render_plan(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
     let Some(model) = app.model_for(result) else {
         return;
     };
-    let plan = crate::fit::plan(model, result.quant, result.context, &app.cfg);
+    let plan = crate::fit::plan(model, result.quant, result.context, &app.cfg, None);
 
     let text = vec![
         Line::from(vec![
@@ -473,9 +473,9 @@ fn render_plan(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
         ]),
         Line::raw(""),
         Line::from(vec![
-            label("On a GPU", palette),
+            label(plan.reference_gpu, palette),
             Span::raw(format!("~{} tok/s", format_tps(plan.tps_gpu))),
-            Span::styled("   on the CPU ", dim(palette)),
+            Span::styled("   on a CPU ", dim(palette)),
             Span::raw(format!("~{} tok/s", format_tps(plan.tps_cpu))),
         ]),
         Line::raw(""),
