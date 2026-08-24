@@ -229,22 +229,40 @@ effective_params = params                      (dense)
                  = √(total × active)           (MoE)
 
 size  = 100 × ln(1 + effective_params) / ln(1 + 70)
-score = size × family_tier × quantization_quality × use_case_affinity
+score = size × family × quantization_quality × use_case_affinity
 ```
 
 Logarithmic in size, because the step from 3B to 7B matters far more than
 from 60B to 70B. For MoE the geometric mean of total and active parameters
 tracks observed quality better than either number alone.
 
-`family_tier` is a hand-set 1–5 reputation multiplier spanning 0.84–1.00.
+`family` is a reputation multiplier on a 0.80–1.00 scale. It comes from
+`data/benchmarks.json` when a family entry matches the model id — public
+HumanEval, GPQA and arena-style results, mapped onto that scale — and
+otherwise from the catalog's hand-set 1–5 `quality_tier`. A measured number is
+simply a finer reading of the quantity the tier estimates, so the two are
+interchangeable.
+
+Size stays the backbone, and the benchmark adjusts it rather than replacing
+it. The two were briefly averaged instead, at 70% benchmark to 30% size, and
+that is worth recording as a mistake: the benchmark numbers are per-family and
+carry no size information at all. The `qwen3` entry alone covers fifteen
+catalog models from 0.6B to 235B — a 392-fold spread sharing one score — so at
+70% of the weight it ranked Qwen3-0.6B above Qwen2.5-7B, and a 270M Gemma
+inherited the 27B model's evaluation. What a benchmark genuinely measures is
+how one family compares with another at equal size, which is exactly what a
+multiplier expresses and an average destroys.
+
 `use_case_affinity` discounts a model asked to do something it was not tuned
 for: a generalist standing in for a code model costs 30%, the reverse only
 15%, and an embedding model is not interchangeable with a generative one at
-all (0.30).
+all (0.30). It applies to the whole score, benchmark-derived or not — when it
+applied to only part, Qwen3-Embedding-0.6B took the qwen3 family's chat number
+at full credit and ranked thirteenth for general use.
 
-This dimension is a heuristic, not a benchmark result. It ranks a 7B coder
-above a 7B generalist for coding, and a 70B above a 7B; it will not tell you
-which of two well-regarded 7B models writes better Python.
+This dimension still ranks families rather than individual checkpoints. It
+puts a 7B coder above a 7B generalist for coding, and a 70B above a 7B; it
+will not tell you which of two well-regarded 7B models writes better Python.
 
 ### Speed
 

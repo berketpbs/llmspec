@@ -671,32 +671,23 @@ fn use_case_affinity(model: UseCase, target: UseCase) -> f64 {
     }
 }
 
+/// Quality score: model size, family reputation, quantization loss and
+/// use-case affinity.
+///
+/// Size is the backbone and benchmark data adjusts it, rather than the two
+/// being averaged. Averaging was wrong because the benchmark numbers are
+/// per-family and say nothing about size: the `qwen3` entry covers fifteen
+/// catalog models from 0.6B to 235B, a 392-fold spread on one score, and at
+/// 70% of the weight that let Qwen3-0.6B outrank Qwen2.5-7B. Feeding the
+/// benchmark in as the family multiplier keeps what it genuinely measures —
+/// how one family compares with another at equal size — and leaves the
+/// parameter count to say how big the model is.
 fn quality_score(model: &Model, quant: Quant, target: UseCase, benchmarks: &BenchmarkDb) -> f64 {
-    let heuristic = quality_score_heuristic(model, quant, target);
+    let family = match benchmarks.lookup(&model.id, target) {
+        Some(bench) => benchmark_factor(bench),
+        None => tier_factor(model.quality_tier),
+    };
 
-    // When benchmark data exists for this model family, blend it with the
-    // size heuristic.  The benchmark carries 70% of the weight because it
-    // reflects actual evaluation results (HumanEval, GPQA, arena-style),
-    // while the heuristic still contributes 30% so that parameter count
-    // and quantization loss are never entirely ignored.
-    if let Some(bench) = benchmarks.lookup(&model.id, target) {
-        // Affinity applies here exactly as it does inside the heuristic. It
-        // used to be applied to only the 30% half, which let a model score
-        // most of its quality on a benchmark for work it is not built for:
-        // Qwen3-Embedding-0.6B took the qwen3 family's chat number at full
-        // credit and ranked thirteenth for general use.
-        let bench_adjusted =
-            bench * quant.quality_factor() * use_case_affinity(model.use_case, target);
-        return (bench_adjusted * 0.70 + heuristic * 0.30).clamp(0.0, 100.0);
-    }
-
-    heuristic
-}
-
-/// Pure heuristic quality score: parameter count, family tier, quantization
-/// loss and use-case affinity.  Used as the fallback when no benchmark data
-/// is available and as 30% of the blended score when it is.
-fn quality_score_heuristic(model: &Model, quant: Quant, target: UseCase) -> f64 {
     // For MoE models the geometric mean of total and active parameters tracks
     // observed quality better than either number alone.
     let effective_params = match model.active_params_b {
@@ -707,10 +698,24 @@ fn quality_score_heuristic(model: &Model, quant: Quant, target: UseCase) -> f64 
     // sub-billion models at the bottom of the catalog, where `1.0 + x` rounds
     // away most of the value being measured.
     let size = 100.0 * effective_params.ln_1p() / QUALITY_SIZE_CEILING.ln_1p();
-    let tier = 0.80 + f64::from(model.quality_tier.clamp(1, 5)) * 0.04;
-    let score =
-        size.min(100.0) * tier * quant.quality_factor() * use_case_affinity(model.use_case, target);
+    let score = size.min(100.0)
+        * family
+        * quant.quality_factor()
+        * use_case_affinity(model.use_case, target);
     score.clamp(0.0, 100.0)
+}
+
+/// Family multiplier from the catalog's hand-set tier, used when no benchmark
+/// covers the model.
+fn tier_factor(tier: u8) -> f64 {
+    0.80 + f64::from(tier.clamp(1, 5)) * 0.04
+}
+
+/// Family multiplier from a benchmark score, on the same 0.80..1.00 scale as
+/// [`tier_factor`] so the two are interchangeable. A measured number simply
+/// gives a finer reading of the same quantity the tier estimates.
+fn benchmark_factor(bench: f64) -> f64 {
+    0.80 + (bench / 100.0).clamp(0.0, 1.0) * 0.20
 }
 
 /// Throughput score.
@@ -890,6 +895,47 @@ mod tests {
             h.set_vram(vram);
         }
         h
+    }
+
+    #[test]
+    fn benchmark_data_never_lets_a_small_sibling_outrank_a_large_one() {
+        // Both match the same `qwen3` benchmark entry, which carries no size
+        // information. When that entry was averaged in at 70% of the weight,
+        // the 0.6B model scored higher than the 32B one.
+        let db = ModelDb::embedded();
+        let benchmarks = BenchmarkDb::embedded();
+        let small = db.find("Qwen/Qwen3-0.6B").unwrap();
+        let large = db.find("Qwen/Qwen3-32B").unwrap();
+        assert!(
+            benchmarks.lookup(&small.id, UseCase::General).is_some(),
+            "the test is meaningless unless the benchmark path is the one taken"
+        );
+
+        let q = |m| quality_score(m, Quant::Q4KM, UseCase::General, &benchmarks);
+        assert!(
+            q(large) > q(small) * 2.0,
+            "0.6B scored {:.1} against 32B at {:.1}",
+            q(small),
+            q(large)
+        );
+    }
+
+    #[test]
+    fn use_case_affinity_applies_to_benchmark_backed_scores() {
+        // An embedding model matched by a generative family's entry must still
+        // pay the affinity discount; it used to be applied to only part of the
+        // score, so the discount was largely bypassed.
+        let db = ModelDb::embedded();
+        let benchmarks = BenchmarkDb::embedded();
+        let embed = db.find("Qwen/Qwen3-Embedding-0.6B").unwrap();
+        assert_eq!(embed.use_case, UseCase::Embedding);
+
+        let as_general = quality_score(embed, Quant::Q8_0, UseCase::General, &benchmarks);
+        let as_embedding = quality_score(embed, Quant::Q8_0, UseCase::Embedding, &benchmarks);
+        assert!(
+            as_general < as_embedding,
+            "general {as_general:.1} should be discounted below embedding {as_embedding:.1}"
+        );
     }
 
     #[test]
