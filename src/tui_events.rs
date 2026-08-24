@@ -132,8 +132,17 @@ fn handle_form_key(app: &mut App, key: KeyEvent) {
 fn handle_normal_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('c') if ctrl => app.should_quit = true,
+        // Esc backs out one level and never ends the session. It used to
+        // quit from here, which meant closing the detail panel and closing
+        // the program were the same keystroke — easy to hit by reflex, and
+        // unrecoverable. From the top level it now does nothing.
+        KeyCode::Esc => {
+            if app.mode != Mode::Normal {
+                app.close_popup();
+            }
+        }
 
         // Navigation. The Ctrl-modified forms must be matched before the bare
         // letters, which mean something else entirely.
