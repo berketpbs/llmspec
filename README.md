@@ -128,7 +128,15 @@ run the one you picked.
 | `A` | Edit the speed model's tunables |
 | `t` | Cycle the colour theme |
 | `h` `?` | Help |
-| `q` `Esc` | Quit |
+| `Esc` | Close the open panel or popup |
+| `q` | Quit |
+
+`Esc` only ever backs out one level; from the top it does nothing, so the
+session cannot be ended by reflex. `q` and `Ctrl-C` quit.
+
+The status bar along the bottom is clickable — each hint is a button that
+sends the key it names — and the wheel moves between models. Capturing the
+mouse means the terminal's own selection needs `Shift` held while dragging.
 
 Downloads and runtime probes run in the background — the interface never
 blocks on the network. Ten themes are included; the choice is remembered.

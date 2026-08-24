@@ -906,7 +906,17 @@ mod tests {
         let row = status_row(&app, 60);
         assert!(row.chars().count() <= 60);
         assert!(row.contains("/ search"), "the first button still fits");
-        assert_eq!(status_button_at(60, 59), None);
+
+        let narrow = status_button_layout(60);
+        assert!(narrow.len() < STATUS_BUTTONS.len(), "some must be dropped");
+        assert!(
+            narrow.iter().all(|(_, end, _)| *end <= 60),
+            "a drawn button must not run off the edge: {narrow:?}"
+        );
+        // The dropped buttons take their keys with them.
+        let kept: Vec<_> = narrow.iter().map(|(_, _, key)| *key).collect();
+        assert!(!kept.contains(&KeyCode::Char('q')));
+        assert_eq!(status_button_at(60, 60), None, "outside the terminal");
     }
 
     #[test]
