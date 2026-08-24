@@ -3,7 +3,11 @@
 use std::io;
 use std::time::Duration;
 
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::crossterm::execute;
 
 use crate::tui_app::{App, Mode};
 use crate::tui_ui;
@@ -23,15 +27,19 @@ pub fn run(app: &mut App) -> io::Result<()> {
         terminal.draw(|frame| tui_ui::draw(frame, app))?;
         app.start_discovery();
 
+        // Held until the loop ends, including on an early error return.
+        let _mouse = MouseCapture::enable()?;
+
         while !app.should_quit {
-            terminal.draw(|frame| tui_ui::draw(frame, app))?;
+            let area = terminal.draw(|frame| tui_ui::draw(frame, app))?.area;
             app.poll_events();
-            if event::poll(POLL_INTERVAL)?
-                && let Event::Key(key) = event::read()?
-                // Windows reports both press and release; act on press only.
-                && key.kind == KeyEventKind::Press
-            {
-                handle_key(app, key);
+            if event::poll(POLL_INTERVAL)? {
+                match event::read()? {
+                    // Windows reports both press and release; act on press only.
+                    Event::Key(key) if key.kind == KeyEventKind::Press => handle_key(app, key),
+                    Event::Mouse(mouse) => handle_mouse(app, mouse, area),
+                    _ => {}
+                }
             }
         }
 
@@ -40,6 +48,52 @@ pub fn run(app: &mut App) -> io::Result<()> {
         app.save_config();
         Ok(())
     })
+}
+
+/// Enables mouse reporting for as long as it is held.
+///
+/// `ratatui::run` restores the screen but knows nothing about the capture,
+/// and a leaked one leaves the terminal spitting escape sequences on every
+/// mouse move long after llmspec has exited. Tying it to a value means the
+/// disable runs even when the draw loop returns early with an error.
+struct MouseCapture;
+
+impl MouseCapture {
+    fn enable() -> io::Result<MouseCapture> {
+        execute!(io::stdout(), EnableMouseCapture)?;
+        Ok(MouseCapture)
+    }
+}
+
+impl Drop for MouseCapture {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+    }
+}
+
+/// Mouse input: the status-bar buttons and the wheel.
+///
+/// Capturing the mouse takes the wheel away from the terminal, so scrolling
+/// has to be handled here or enabling the buttons would break scrolling.
+fn handle_mouse(app: &mut App, mouse: MouseEvent, area: ratatui::layout::Rect) {
+    // A popup covers the status bar and takes over the keys the buttons
+    // stand for, so nothing down there is live while one is open.
+    if app.mode.is_popup() || app.mode == Mode::Search {
+        return;
+    }
+    match mouse.kind {
+        MouseEventKind::ScrollDown => app.move_selection(1),
+        MouseEventKind::ScrollUp => app.move_selection(-1),
+        MouseEventKind::Down(MouseButton::Left) => {
+            // The status bar is the last row of the frame.
+            if mouse.row + 1 == area.height
+                && let Some(code) = tui_ui::status_button_at(area.width, mouse.column)
+            {
+                handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+            }
+        }
+        _ => {}
+    }
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {

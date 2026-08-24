@@ -5,6 +5,7 @@
 //! one cannot leave part of the screen behind.
 
 use ratatui::Frame;
+use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -587,8 +588,62 @@ fn truncate(text: &str, width: usize) -> String {
 // Status bar
 // ---------------------------------------------------------------------------
 
-/// Keys advertised in the status bar. The full list lives in the help popup.
-const STATUS_HINT: &str = " j/k move · / search · f fit · a show · s sort · u use case · d download · Enter detail · h help · q quit";
+/// Shown before the buttons. Not clickable — there is nothing to press for
+/// "move the cursor".
+const STATUS_PREFIX: &str = " j/k move  ";
+
+/// Blank columns drawn between two buttons.
+const BUTTON_GAP: u16 = 1;
+
+/// The status bar's clickable hints, in the order they are drawn.
+///
+/// Each one carries the keystroke it stands for rather than an action of its
+/// own, so a click is dispatched down exactly the same path as the key. The
+/// full list of bindings lives in the help popup.
+const STATUS_BUTTONS: &[(&str, KeyCode)] = &[
+    ("/ search", KeyCode::Char('/')),
+    ("f fit", KeyCode::Char('f')),
+    ("a show", KeyCode::Char('a')),
+    ("s sort", KeyCode::Char('s')),
+    ("u use case", KeyCode::Char('u')),
+    ("d download", KeyCode::Char('d')),
+    ("Enter detail", KeyCode::Enter),
+    ("h help", KeyCode::Char('h')),
+    ("q quit", KeyCode::Char('q')),
+];
+
+/// Where each button sits on the status row: `(first column, one past the
+/// last, keystroke)`.
+///
+/// Rendering and hit-testing both walk this, so a click cannot land on a
+/// different label than the one drawn. Buttons that would run past the right
+/// edge are dropped rather than clipped — a half-drawn label that still
+/// answers to clicks is worse than no label.
+fn status_button_layout(width: u16) -> Vec<(u16, u16, KeyCode)> {
+    let mut x = STATUS_PREFIX.chars().count() as u16;
+    let mut out = Vec::with_capacity(STATUS_BUTTONS.len());
+    for (label, key) in STATUS_BUTTONS {
+        // One padding space on each side of the label.
+        let end = x + label.chars().count() as u16 + 2;
+        if end > width {
+            break;
+        }
+        out.push((x, end, *key));
+        x = end + BUTTON_GAP;
+    }
+    out
+}
+
+/// The keystroke a click at `column` on the status row stands for.
+///
+/// `None` when the click missed every button, so a stray click in the gaps
+/// does nothing rather than guessing at the nearest one.
+pub fn status_button_at(width: u16, column: u16) -> Option<KeyCode> {
+    status_button_layout(width)
+        .into_iter()
+        .find(|(start, end, _)| column >= *start && column < *end)
+        .map(|(_, _, key)| key)
+}
 
 fn render_status(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
     let line = if app.mode == Mode::Search {
@@ -611,7 +666,17 @@ fn render_status(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
             dim(palette),
         ))
     } else {
-        let mut spans = vec![Span::styled(STATUS_HINT, dim(palette))];
+        let mut spans = vec![Span::styled(STATUS_PREFIX, dim(palette))];
+        // Drawn from the same layout the click handler reads, so the two
+        // cannot disagree about where a button is.
+        let drawn = status_button_layout(area.width).len();
+        for (label, _) in STATUS_BUTTONS.iter().take(drawn) {
+            spans.push(Span::styled(
+                format!(" {label} "),
+                Style::new().fg(palette.selection).bg(palette.accent),
+            ));
+            spans.push(Span::raw(" ".repeat(BUTTON_GAP as usize)));
+        }
         if !app.status.is_empty() {
             spans.push(Span::styled(
                 format!("  │  {}", app.status),
@@ -666,7 +731,11 @@ const HELP: &[(Option<&str>, &str)] = &[
     (None, "Other"),
     (Some("t"), "cycle the colour theme"),
     (Some("h / ?"), "this help"),
-    (Some("q / Esc"), "quit"),
+    (Some("Esc"), "close the open panel or popup"),
+    (Some("q"), "quit"),
+    (None, "Mouse"),
+    (Some("click"), "press a button in the status bar"),
+    (Some("wheel"), "move between models"),
 ];
 
 fn render_help(frame: &mut Frame, area: Rect, palette: &Palette) {
