@@ -33,6 +33,13 @@ Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
 
+# Raw screen recordings. The demo the README embeds is docs/demo.gif, at about
+# a megabyte; an uncompressed capture is twenty times that and nothing links to
+# it. Compress one into docs/ rather than committing the capture.
+/Record.gif
+/Record*.mp4
+/Record*.mov
+
 # Local scratch space
 /scratch/
 /tmp/
