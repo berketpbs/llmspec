@@ -124,6 +124,21 @@ fn legacy_speed_model() -> u32 {
     1
 }
 
+/// Version of the memory probe a cached bandwidth was measured with.
+///
+/// A change to the probe moves the scale of what it reports, and every
+/// estimate for weights in RAM takes the cached figure at face value. A value
+/// from an older probe is dropped on load, so the machine is measured again
+/// once instead of carrying the old scale forever.
+///
+/// - 1: one thread streaming a 64 MiB buffer.
+/// - 2: one thread per physical core, started once per timed round.
+pub const RAM_PROBE_VERSION: u32 = 2;
+
+fn legacy_ram_probe() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -152,6 +167,10 @@ pub struct Config {
     /// answers in under a second.
     #[serde(default)]
     pub ram_bandwidth_gb_s: Option<f64>,
+    /// Probe version `ram_bandwidth_gb_s` was measured with. A file that
+    /// predates the field was measured by version 1.
+    #[serde(default = "legacy_ram_probe")]
+    pub ram_probe: u32,
 }
 
 impl Default for Config {
@@ -163,6 +182,7 @@ impl Default for Config {
             calibration: None,
             speed: PersistedSpeed::default(),
             ram_bandwidth_gb_s: None,
+            ram_probe: RAM_PROBE_VERSION,
         }
     }
 }
@@ -225,11 +245,11 @@ impl Config {
     /// to `config.json`; every later call reads it. A machine that cannot be
     /// measured, or cannot persist anything, falls back to the shipped
     /// constant rather than paying for a failing probe on every run.
-    pub fn ram_bandwidth(&mut self) -> f64 {
+    pub fn ram_bandwidth(&mut self, threads: usize) -> f64 {
         if let Some(measured) = self.ram_bandwidth_gb_s {
             return measured;
         }
-        let Some(measured) = crate::hardware::measure_ram_bandwidth_gb_s() else {
+        let Some(measured) = crate::hardware::measure_ram_bandwidth_gb_s(threads) else {
             return CPU_MEM_BANDWIDTH_FALLBACK_GB_S;
         };
         self.ram_bandwidth_gb_s = Some(measured);
@@ -254,15 +274,20 @@ impl Config {
         Ok(config.migrated())
     }
 
-    /// Drop speed settings written for an older speed model.
+    /// Drop speed settings written for an older speed model, and a bandwidth
+    /// measured by an older probe.
     ///
-    /// Everything else in the file — theme, use case, the measured bandwidth
-    /// — is a fact or a preference that survives a formula change, and is kept.
+    /// Everything else in the file — theme, use case, a current measurement —
+    /// is a fact or a preference that survives a formula change, and is kept.
     pub fn migrated(mut self) -> Config {
         if self.speed_model != SPEED_MODEL_VERSION {
             self.speed = PersistedSpeed::default();
             self.calibration = None;
             self.speed_model = SPEED_MODEL_VERSION;
+        }
+        if self.ram_probe != RAM_PROBE_VERSION {
+            self.ram_bandwidth_gb_s = None;
+            self.ram_probe = RAM_PROBE_VERSION;
         }
         self
     }
@@ -432,6 +457,7 @@ mod tests {
                 ..PersistedSpeed::default()
             },
             ram_bandwidth_gb_s: Some(94.5),
+            ram_probe: RAM_PROBE_VERSION,
         };
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path).unwrap();
@@ -487,7 +513,8 @@ mod tests {
                 "speed": {"efficiency": 0.55, "cpu_only_factor": 0.3},
                 "calibration": {"efficiency": 0.81, "samples": 1, "measured_at": 0,
                                 "gpu": "RTX 4060", "backend": "CUDA"},
-                "ram_bandwidth_gb_s": 44.0
+                "ram_bandwidth_gb_s": 44.0,
+                "ram_probe": 2
             }"#,
         )
         .unwrap();
@@ -515,6 +542,25 @@ mod tests {
         let loaded = Config::load_from(&path).unwrap();
         let _ = fs::remove_file(&path);
         assert!((loaded.speed.efficiency - 0.66).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_bandwidth_from_an_older_probe_is_measured_again() {
+        // The single-threaded probe read about 15% below the threaded one on
+        // the same machine. Keeping its figure would pin that machine to the
+        // old scale for good, since a cached value is never re-measured.
+        let legacy: Config =
+            serde_json::from_str(r#"{"theme": "nord", "ram_bandwidth_gb_s": 44.0}"#).unwrap();
+        let loaded = legacy.migrated();
+        assert_eq!(loaded.ram_bandwidth_gb_s, None);
+        assert_eq!(loaded.ram_probe, RAM_PROBE_VERSION);
+        assert_eq!(loaded.theme, ThemeRef::Name("nord".to_string()));
+
+        let current: Config = serde_json::from_str(&format!(
+            r#"{{"ram_bandwidth_gb_s": 53.0, "ram_probe": {RAM_PROBE_VERSION}}}"#
+        ))
+        .unwrap();
+        assert_eq!(current.migrated().ram_bandwidth_gb_s, Some(53.0));
     }
 
     fn run(gpu: &str, quant: &str, tps: f64, at: u64) -> StoredMeasurement {
