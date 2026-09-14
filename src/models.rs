@@ -481,18 +481,46 @@ impl ModelDb {
     /// Look a model up by id, name, runtime tag, or free text.
     ///
     /// Exact matches win over fuzzy ones so that a precise query is never
-    /// answered with a near miss.
-    pub fn find(&self, query: &str) -> Option<&Model> {
+    /// answered with a near miss. A free-text query that matches several
+    /// models is reported as such rather than resolved to whichever happens to
+    /// come first in the catalog.
+    pub fn resolve(&self, query: &str) -> Lookup<'_> {
         let q = query.trim().to_ascii_lowercase();
-        self.models
+        if q.is_empty() {
+            return Lookup::NotFound;
+        }
+        let exact = self
+            .models
             .iter()
             .find(|m| {
                 m.id.to_ascii_lowercase() == q
                     || m.name.to_ascii_lowercase() == q
                     || m.ollama.as_deref().map(str::to_ascii_lowercase) == Some(q.clone())
             })
-            .or_else(|| self.find_for_runtime(&q))
-            .or_else(|| self.models.iter().find(|m| m.matches(&q)))
+            .or_else(|| self.find_for_runtime(&q));
+        if let Some(model) = exact {
+            return Lookup::Found(model);
+        }
+
+        let mut matches: Vec<&Model> = self.models.iter().filter(|m| m.matches(&q)).collect();
+        match matches.len() {
+            0 => Lookup::NotFound,
+            1 => Lookup::Found(matches.remove(0)),
+            _ => Lookup::Ambiguous(matches),
+        }
+    }
+
+    /// [`Self::resolve`], taking the first candidate when several match.
+    ///
+    /// For callers that address a model by an identifier they already hold —
+    /// an id from an earlier response, a catalog entry being re-read — where
+    /// there is nothing for a person to disambiguate.
+    pub fn find(&self, query: &str) -> Option<&Model> {
+        match self.resolve(query) {
+            Lookup::Found(model) => Some(model),
+            Lookup::Ambiguous(mut candidates) => Some(candidates.remove(0)),
+            Lookup::NotFound => None,
+        }
     }
 
     /// Resolve a name a local runtime used back to its catalog entry.
@@ -564,6 +592,50 @@ fn runtime_tag_family(reference: &str) -> Option<String> {
     let (family, _) = reference.trim().split_once(':')?;
     let family = family.trim().to_ascii_lowercase();
     (!family.is_empty()).then_some(family)
+}
+
+/// What looking a model up by a typed query produced.
+///
+/// The third case is the reason this is not an `Option`: answering "llama"
+/// with whichever Llama sorts first looks like an answer, and a person acting
+/// on the wrong model's numbers has no way to tell. Saying that the query was
+/// ambiguous costs one round trip and is never wrong.
+pub enum Lookup<'a> {
+    Found(&'a Model),
+    /// Several models matched the query and none of them exactly.
+    Ambiguous(Vec<&'a Model>),
+    NotFound,
+}
+
+impl<'a> Lookup<'a> {
+    /// The model, or the error a person should see: which query failed and,
+    /// when it was ambiguous, the candidates to pick from.
+    pub fn into_result(self, query: &str) -> Result<&'a Model, String> {
+        match self {
+            Lookup::Found(model) => Ok(model),
+            Lookup::NotFound => Err(format!("no model matches '{query}'")),
+            Lookup::Ambiguous(candidates) => Err(ambiguous(query, &candidates)),
+        }
+    }
+}
+
+/// Report a query that matched several models, naming the ones it matched.
+///
+/// The list is the useful half: the next command is a copy of one of these
+/// lines, so enough of them are shown to pick from without burying the reason
+/// the first attempt failed.
+fn ambiguous(query: &str, candidates: &[&Model]) -> String {
+    const NAMED: usize = 8;
+
+    let mut out = format!("'{query}' matches {} models:", candidates.len());
+    for model in candidates.iter().take(NAMED) {
+        out.push_str(&format!("\n  {}", model.id));
+    }
+    if let Some(rest) = candidates.len().checked_sub(NAMED).filter(|n| *n > 0) {
+        out.push_str(&format!("\n  ... and {rest} more"));
+    }
+    out.push_str("\nname one of them, or narrow the query");
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +776,67 @@ mod tests {
             .find_for_runtime_sized("deepseek-r1:latest", Some(7.6))
             .expect("7.6B is the Qwen 7B distill");
         assert_eq!(found.id, "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B");
+    }
+
+    #[test]
+    fn an_exact_query_resolves_even_when_others_would_also_match() {
+        let db = ModelDb::embedded();
+        // Plenty of models would match this id fuzzily. An exact id must never
+        // be reported as ambiguous.
+        let id = "meta-llama/Llama-3.1-8B-Instruct";
+        assert!(matches!(db.resolve(id), Lookup::Found(m) if m.id == id));
+        // The same holds for a runtime tag.
+        assert!(matches!(db.resolve("deepseek-r1:7b"), Lookup::Found(_)));
+    }
+
+    #[test]
+    fn a_broad_query_is_reported_as_ambiguous_rather_than_guessed() {
+        let db = ModelDb::embedded();
+        let Lookup::Ambiguous(candidates) = db.resolve("llama") else {
+            panic!("'llama' matches many models and none of them exactly");
+        };
+        assert!(
+            candidates.len() > 1,
+            "an ambiguous result must carry every candidate"
+        );
+        // Every candidate really does match, so the list is worth printing.
+        assert!(candidates.iter().all(|m| m.matches("llama")));
+    }
+
+    #[test]
+    fn an_ambiguous_error_names_the_candidates_and_how_many_were_left_out() {
+        let db = ModelDb::embedded();
+        let Err(message) = db.resolve("llama").into_result("llama") else {
+            panic!("'llama' is ambiguous");
+        };
+        assert!(message.starts_with("'llama' matches "), "{message}");
+        assert!(message.contains("\n  meta-llama/"), "{message}");
+        assert!(message.contains("more"), "{message}");
+    }
+
+    #[test]
+    fn a_query_matching_one_model_is_not_ambiguous() {
+        let db = ModelDb::embedded();
+        assert!(matches!(
+            db.resolve("Qwen3-Embedding-0.6B"),
+            Lookup::Found(_)
+        ));
+    }
+
+    #[test]
+    fn nothing_matching_is_still_nothing() {
+        let db = ModelDb::embedded();
+        assert!(matches!(db.resolve("no such model here"), Lookup::NotFound));
+        assert!(matches!(db.resolve("   "), Lookup::NotFound));
+    }
+
+    #[test]
+    fn find_keeps_taking_the_first_candidate() {
+        // `find` is what the HTTP route and the tests use, where the caller
+        // already holds an identifier; it must not start refusing to answer.
+        let db = ModelDb::embedded();
+        assert!(db.find("llama").is_some());
+        assert!(db.find("no such model here").is_none());
     }
 
     #[test]

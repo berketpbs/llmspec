@@ -310,9 +310,7 @@ impl Session {
     /// Look one model up by the words the user typed.
     fn find(&self, words: &[String]) -> Result<&models::Model, String> {
         let query = words.join(" ");
-        self.db
-            .find(&query)
-            .ok_or_else(|| format!("no model matches '{query}'"))
+        self.db.resolve(&query).into_result(&query)
     }
 }
 
