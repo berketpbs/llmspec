@@ -137,10 +137,9 @@ impl Default for SpeedConfig {
     /// than its memory allows.
     ///
     /// `cpu_efficiency` is 1.0 because it is relative to llmspec's own probe,
-    /// which streams from one thread and so reads lower than a multi-threaded
-    /// decode achieves. On a DDR5-5600 laptop the probe measures 44 GB/s, and a
-    /// sweep of CPU/GPU layer splits recovers 47 to 57 GB/s from the decode
-    /// itself.
+    /// which streams from every physical core as a threaded decode does. On a
+    /// DDR5-5600 laptop the probe measures 53 to 54 GB/s, and a sweep of
+    /// CPU/GPU layer splits recovers 47 to 57 GB/s from the decode itself.
     fn default() -> Self {
         SpeedConfig {
             efficiency: 0.80,
