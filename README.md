@@ -35,7 +35,8 @@ does not fit.*
 ## Contents
 
 - [Install](#install) · [Quick start](#quick-start) · [The interactive interface](#the-interactive-interface)
-- [Commands](#commands) · [Filtering](#filtering) · [Benchmarking](#benchmarking) · [HTTP API](#http-api)
+- [Commands](#commands) · [Filtering](#filtering) · [Benchmarking](#benchmarking)
+- [HTTP API](#http-api) · [MCP](#mcp) · [Verifying a download](#verifying-a-download)
 - [Configuration](#configuration) · [Adding your own models](#adding-your-own-models)
 - [How it decides](#how-it-decides) · [Supported hardware](#supported-hardware) · [Runtimes](#runtimes)
 
@@ -165,10 +166,13 @@ blocks on the network. Twenty-one themes are included; the choice is remembered.
 | `llmspec search <query>` | Search the catalog and rank the matches |
 | `llmspec list` | The catalog, with no hardware analysis |
 | `llmspec system` | Detected hardware |
+| `llmspec gpus [filter]` | GPUs with known memory bandwidth, for use with `--gpu` |
 | `llmspec doctor` | Diagnostic report; exits non-zero on warnings |
 | `llmspec runtimes` | Local inference servers that are running |
 | `llmspec bench` | Measure real tokens/sec against a running runtime |
 | `llmspec serve` | Read-only HTTP API |
+| `llmspec mcp` | Serve the analysis to an assistant over MCP |
+| `llmspec verify <file>` | Check a downloaded model file for damage or truncation |
 
 ### Global flags
 
@@ -180,6 +184,9 @@ blocks on the network. Twenty-one themes are included; the choice is remembered.
 | `--memory SIZE` | Override VRAM, e.g. `24G` — creates a synthetic GPU if none is found |
 | `--ram SIZE` | Override system RAM, e.g. `128G` |
 | `--cpu-cores N` | Override the core count |
+| `--gpu NAME` | Simulate a known GPU, e.g. `"RTX 3090"` — brings its VRAM and bandwidth (see `llmspec gpus`) |
+| `--gpu-count N` | Number of simulated GPUs, with `--gpu` |
+| `--kv-quant TYPE` | How the runtime stores the KV cache: `f16`, `q8_0`, `q4_0` |
 | `--max-context N` | Cap the context used for memory estimation |
 | `--cli` | Force table output instead of the interface |
 
@@ -189,6 +196,7 @@ The overrides make llmspec a shopping tool as much as a diagnostic one:
 
 ```sh
 llmspec fit --memory 24G --ram 64G -u coding -n 10     # if I bought a 3090
+llmspec fit --gpu "RTX 3090" --ram 64G -u coding        # same, with the card's real bandwidth
 llmspec fit --memory 0 --ram 64G                        # CPU-only server
 ```
 
@@ -263,6 +271,12 @@ so a ratio above 1.0 is normal. What matters is that llmspec tells you exactly
 what it assumed and hands you the one number that reconciles the two, instead
 of leaving you to guess which knob to turn.
 
+`llmspec bench --calibrate` applies that number for you: it fits the
+efficiency factor to the runs it just measured and saves it with the GPU and
+backend it was measured on. The calibration is only used on that machine, and
+`doctor` reports whether one is in effect, where it came from and how old it
+is.
+
 ---
 
 ## HTTP API
@@ -294,6 +308,90 @@ curl "http://127.0.0.1:8228/models/Qwen%2FQwen2.5-7B-Instruct"
 ```
 
 Built on `std::net` — serving adds no dependency.
+
+---
+
+## MCP
+
+`llmspec mcp` speaks the Model Context Protocol on stdin/stdout, so an
+assistant can ask what this machine runs instead of being told.
+
+```sh
+claude mcp add llmspec -- llmspec mcp
+```
+
+There is nothing else to install: the server is the same binary, and the
+catalog is compiled into it.
+
+| Tool | Answers |
+|---|---|
+| `system` | What hardware is here, and the bandwidth the estimates come from |
+| `runtimes` | Which runtimes are running locally, and what each has installed |
+| `fit` | What this machine can run, ranked — the `fit` command as a tool |
+| `model` | One model's full analysis on this machine |
+| `search` | Catalog lookup by name, provider, size or use case |
+| `plan` | What hardware a model needs, and which GPUs reach a target tokens/sec |
+| `verify` | Whether a model file on disk is intact |
+
+`fit` takes `use_case`, `limit`, `provider`, `min_fit`, `min_tokens_per_sec`,
+`max_size_gb` and `include_unrunnable`; `plan` takes `context`, `quant` and
+`target_tokens_per_sec`.
+
+The protocol has two eras — the newer revisions carry their version in each
+request's `_meta` and answer `server/discover`, the older ones open with an
+`initialize` handshake — and clients are still spread across both. llmspec
+answers either, so it does not matter which one your client speaks.
+
+Because stdout carries the protocol, every diagnostic goes to stderr. Clients
+show that as the server's log.
+
+---
+
+## Verifying a download
+
+A 40 GB download that stopped at 38 GB looks fine until the runtime chokes on
+it. `llmspec verify` reads the header and says so in a fraction of a second,
+without touching the weights.
+
+```sh
+llmspec verify ~/.ollama/models/blobs/sha256-2bada8a745...
+```
+
+```
+  GGUF, 4.4 GB
+
+Contents
+  Version        3
+  Architecture   qwen2
+  Name           Qwen2.5 7B Instruct
+  Tensors        339
+  Parameters     7.6B
+  Types          Q4_K (169), F32 (141), Q6_K (29)
+  Context        32K
+  Tensor data    4.4 GB
+
+  The file is structurally intact.
+```
+
+It reads GGUF and safetensors, and exits non-zero when the file is damaged,
+so it drops into a script between the download and the job:
+
+```
+  error    the file is 4.3 GB short: the tensor table describes 4.4 GB of data
+           but the file ends at 47.7 MB. The download did not finish.
+```
+
+The parameter count and quantization mix are summed from the tensor table, so
+they describe what the file *contains* rather than what its name claims. For
+safetensors it also checks that no two tensors claim the same bytes.
+
+Every length in these formats comes from the file itself, so nothing here
+allocates on a number before proving the bytes exist to back it — a header
+claiming two billion tensors is refused immediately rather than honoured.
+
+This is a structural check. It does not execute anything and cannot tell a
+well-formed malicious model from a well-formed honest one; it tells you the
+container is intact.
 
 ---
 
@@ -497,7 +595,7 @@ The catalog is generated by `scripts/add_models.py`, which merges entries by
 ## Development
 
 ```sh
-cargo test          # 212 tests
+cargo test          # 279 tests
 cargo clippy --all-targets
 cargo fmt
 ```

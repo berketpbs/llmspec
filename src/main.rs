@@ -1,11 +1,14 @@
 //! llmspec — find the LLMs that actually run well on your hardware.
 
+#[cfg(test)]
+mod accuracy;
 mod bench;
 mod config;
 mod display;
 mod doctor;
 mod fit;
 mod hardware;
+mod mcp;
 mod models;
 mod providers;
 mod serve;
@@ -14,14 +17,15 @@ mod tui_events;
 mod tui_form;
 mod tui_theme;
 mod tui_ui;
+mod verify;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 
-use crate::config::Config;
+use crate::config::{Calibration, Config, MeasurementStore, StoredMeasurement};
 use crate::fit::{FitLevel, FitResult, RunMode, SpeedConfig};
-use crate::hardware::{Hardware, parse_size_gb};
-use crate::models::{ModelDb, Quant, UseCase};
+use crate::hardware::{Hardware, MeasuredThroughput, parse_size_gb};
+use crate::models::{KvQuant, ModelDb, Quant, UseCase};
 use crate::providers::{InstalledModel, ProviderRegistry, Runtime, RuntimeKind};
 
 #[derive(Parser, Debug)]
@@ -54,6 +58,25 @@ struct Cli {
     /// Override detected CPU core count
     #[arg(long, global = true, value_name = "N")]
     cpu_cores: Option<usize>,
+
+    /// Simulate a GPU by model name, e.g. "RTX 3090" or "M4 Pro" — brings its
+    /// VRAM and memory bandwidth; see `llmspec gpus`
+    #[arg(long, global = true, value_name = "NAME")]
+    gpu: Option<String>,
+
+    /// Number of simulated GPUs (with --gpu)
+    #[arg(
+        long,
+        global = true,
+        value_name = "N",
+        default_value_t = 1,
+        requires = "gpu"
+    )]
+    gpu_count: usize,
+
+    /// How the runtime stores the KV cache: f16, q8_0, q4_0
+    #[arg(long, global = true, value_name = "TYPE")]
+    kv_quant: Option<String>,
 
     /// Cap the context length used for memory estimation
     #[arg(long, global = true, value_name = "TOKENS")]
@@ -155,6 +178,9 @@ enum Command {
         /// Tokens to generate per run
         #[arg(long, value_name = "N")]
         tokens: Option<u32>,
+        /// Fit the efficiency factor to what was measured and save it
+        #[arg(long)]
+        calibrate: bool,
     },
 
     /// Serve the fit analysis over a read-only HTTP API
@@ -165,6 +191,21 @@ enum Command {
         /// Port to listen on
         #[arg(long, default_value_t = 8228, value_name = "PORT")]
         port: u16,
+    },
+
+    /// Serve the fit analysis to an assistant over MCP (stdio)
+    Mcp,
+
+    /// Check a model file on disk for damage or truncation
+    Verify {
+        /// Path to a .gguf or .safetensors file
+        file: std::path::PathBuf,
+    },
+
+    /// The GPUs llmspec knows the memory bandwidth of, for use with --gpu
+    Gpus {
+        /// Only cards whose name contains this, e.g. "4090" or "m4"
+        filter: Vec<String>,
     },
 
     /// Plan hardware requirements for a model configuration
@@ -219,10 +260,29 @@ impl Session {
             None => stored.use_case,
         };
         let runtime = resolve_runtime(cli)?;
+        let kv_quant = match &cli.kv_quant {
+            Some(raw) => KvQuant::parse(raw)
+                .ok_or_else(|| unknown("KV cache type", raw, &KvQuant::hint()))?,
+            None => KvQuant::default(),
+        };
         let mut hw = build_hardware(cli)?;
         // Measured once per machine and cached. Every estimate for weights
         // that spill into RAM is only as good as this figure.
         hw.ram_bandwidth_gb_s = Some(stored.ram_bandwidth());
+        // What `bench` measured here outranks any estimate — but only on the
+        // machine it was measured on, never on a simulated one.
+        if !hw.simulated {
+            hw.measured =
+                MeasurementStore::load().for_machine(&hw.primary_gpu_name(), hw.backend.label());
+        }
+        // A calibration fitted by `bench --calibrate` replaces the shipped
+        // efficiency factor, but only on the machine it was measured on: the
+        // number describes that card and runtime, not the speed model.
+        let calibrated = stored
+            .calibration
+            .as_ref()
+            .filter(|c| !hw.simulated && c.matches(&hw.primary_gpu_name(), hw.backend.label()))
+            .map(|c| c.efficiency);
         Ok(Session {
             hw,
             db: ModelDb::load(),
@@ -233,6 +293,9 @@ impl Session {
                 // vLLM read the same weights faster than a GGUF loader does.
                 gpu_factor: stored.speed.gpu_factor
                     * runtime.map_or(1.0, RuntimeKind::speed_factor),
+                efficiency: calibrated.unwrap_or(stored.speed.efficiency),
+                calibrated: calibrated.is_some(),
+                kv_quant,
                 ..stored.speed.apply_to(&SpeedConfig::default())
             },
             runtime,
@@ -254,6 +317,15 @@ impl Session {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
+    // `verify` answers a question about a file, not about this machine, so it
+    // skips the hardware probe the rest of the commands need.
+    if let Some(Command::Verify { file }) = &cli.command {
+        return cmd_verify(&cli, file);
+    }
+    // Neither does listing the GPU table.
+    if let Some(Command::Gpus { filter }) = &cli.command {
+        return cmd_gpus(&cli, filter);
+    }
     let session = Session::build(&cli)?;
     match &cli.command {
         Some(Command::System) => cmd_system(&cli, &session),
@@ -269,7 +341,8 @@ fn run(cli: Cli) -> Result<(), String> {
             all,
             runs,
             tokens,
-        }) => cmd_bench(&cli, &session, model, *all, *runs, *tokens),
+            calibrate,
+        }) => cmd_bench(&cli, &session, model, *all, *runs, *tokens, *calibrate),
         Some(Command::Plan {
             model,
             context,
@@ -284,6 +357,11 @@ fn run(cli: Cli) -> Result<(), String> {
             *target_tps,
         ),
         Some(Command::Serve { host, port }) => cmd_serve(session, host, *port),
+        Some(Command::Gpus { filter }) => cmd_gpus(&cli, filter),
+        Some(Command::Mcp) => cmd_mcp(session),
+        // Answered above, before the session was built. Repeating the call
+        // here keeps the match exhaustive without a panicking arm.
+        Some(Command::Verify { file }) => cmd_verify(&cli, file),
         None => cmd_default(&cli, session),
     }
 }
@@ -447,6 +525,7 @@ fn cmd_bench(
     all: bool,
     runs: usize,
     tokens: Option<u32>,
+    calibrate: bool,
 ) -> Result<(), String> {
     let mut registry = ProviderRegistry::new();
     let discovered = bench::select_runtime(&mut registry, session.runtime)?;
@@ -469,9 +548,8 @@ fn cmd_bench(
             .db
             .find_for_runtime_sized(model_ref, target.params_b)
         {
-            let analysis = fit::analyze(found, &session.hw, session.target, &session.cfg);
-            let weights_gb = found.weights_gb(analysis.quant);
-            bench::attach_estimate(&mut result, &analysis, weights_gb);
+            let (assumed, estimated) = bench_estimate(session, found, target);
+            bench::attach_estimate(&mut result, assumed, estimated);
         }
         results.push(result);
     }
@@ -486,7 +564,108 @@ fn cmd_bench(
     } else {
         print!("{}", display::render_bench(&report));
     }
+    record_measurements(session, discovered.kind, &report);
+    if calibrate {
+        save_calibration(session, &report)?;
+    }
     Ok(())
+}
+
+/// What llmspec predicts for the run a benchmark just measured.
+///
+/// When the runtime says which quantization it loaded, the estimate is made
+/// for exactly those bytes at the context the benchmark asked for; the ratio
+/// then measures the speed model and nothing else. Otherwise llmspec's own
+/// placement stands in, and the output says so.
+fn bench_estimate(
+    session: &Session,
+    model: &models::Model,
+    target: &BenchTarget,
+) -> (bench::Assumptions, f64) {
+    let reported = target.quantization.as_deref().and_then(Quant::parse);
+    if let Some(quant) = reported
+        && let Some((mode, tps)) = fit::estimate_at_quant(
+            model,
+            &session.hw,
+            quant,
+            providers::BENCH_CONTEXT,
+            &session.cfg,
+        )
+    {
+        let assumed = bench::Assumptions {
+            catalog_id: model.id.clone(),
+            quantization: quant.label(),
+            quantization_source: "runtime",
+            context: providers::BENCH_CONTEXT.min(model.context_length),
+            run_mode: mode,
+            weights_gb: model.weights_gb(quant),
+        };
+        return (assumed, tps);
+    }
+    let analysis = fit::analyze(model, &session.hw, session.target, &session.cfg);
+    let assumed = bench::Assumptions {
+        catalog_id: model.id.clone(),
+        quantization: analysis.quant.label(),
+        quantization_source: "placement",
+        context: analysis.context,
+        run_mode: analysis.mode,
+        weights_gb: model.weights_gb(analysis.quant),
+    };
+    (assumed, analysis.estimate.formula_tps)
+}
+
+/// Keep what was measured, so it replaces the estimate from now on.
+///
+/// Only runs matched to a catalog entry at a known quantization are kept —
+/// a measurement is only reusable if it is clear which placement it
+/// describes — and never from a simulated machine, whose flags describe
+/// hardware the benchmark did not run on.
+fn record_measurements(session: &Session, runtime: RuntimeKind, report: &bench::BenchReport) {
+    if session.hw.simulated {
+        return;
+    }
+    let mut store = MeasurementStore::load();
+    let mut kept = 0;
+    for result in &report.results {
+        let Some(assumed) = &result.assumed else {
+            continue;
+        };
+        if assumed.quantization_source != "runtime" || result.tokens_per_second <= 0.0 {
+            continue;
+        }
+        store.record(StoredMeasurement {
+            gpu: session.hw.primary_gpu_name(),
+            backend: session.hw.backend.label().to_string(),
+            runtime: runtime.label().to_string(),
+            context: assumed.context,
+            throughput: MeasuredThroughput {
+                model_id: assumed.catalog_id.clone(),
+                quant: assumed.quantization.to_string(),
+                run_mode: assumed.run_mode.label().to_string(),
+                tokens_per_second: result.tokens_per_second,
+                measured_at: crate::config::now_unix(),
+            },
+        });
+        kept += 1;
+    }
+    if kept == 0 {
+        return;
+    }
+    // Losing a measurement costs a re-run, not a wrong answer, so a failed
+    // write is reported but does not fail the benchmark.
+    match store.save() {
+        Ok(path) => eprintln!(
+            "saved {kept} measurement{} to {} — they replace the estimate for {} from now on",
+            if kept == 1 { "" } else { "s" },
+            path.display(),
+            if kept == 1 {
+                "that model"
+            } else {
+                "those models"
+            }
+        ),
+        Err(e) => eprintln!("could not save measurements: {e}"),
+    }
 }
 
 fn cmd_plan(
@@ -512,6 +691,21 @@ fn cmd_plan(
     Ok(())
 }
 
+/// List the bandwidth table, so `--gpu` can be given a name it will accept.
+fn cmd_gpus(cli: &Cli, filter: &[String]) -> Result<(), String> {
+    let needle = filter.join(" ").to_ascii_lowercase();
+    let cards = hardware::known_gpus(&needle);
+    if cards.is_empty() {
+        return Err(format!("no known GPU matches '{needle}'"));
+    }
+    if cli.json {
+        println!("{}", display::to_json(&cards));
+    } else {
+        print!("{}", display::render_gpus(&cards));
+    }
+    Ok(())
+}
+
 fn cmd_serve(session: Session, host: &str, port: u16) -> Result<(), String> {
     let Session {
         hw,
@@ -521,6 +715,88 @@ fn cmd_serve(session: Session, host: &str, port: u16) -> Result<(), String> {
         ..
     } = session;
     serve::Server::new(hw, db, cfg, target).listen(host, port)
+}
+
+/// Fit the efficiency factor to what `bench` just measured and store it.
+///
+/// The speed model is linear in `efficiency`, so this is the one knob that
+/// reconciles the estimate with a measurement. It is written only when asked
+/// for: a benchmark of one model on a busy machine should not silently move
+/// every number llmspec reports.
+fn save_calibration(session: &Session, report: &bench::BenchReport) -> Result<(), String> {
+    let Some(efficiency) = report.suggested_efficiency else {
+        return Err(
+            "nothing to calibrate from: none of the benchmarked models matched a \
+             catalog entry, so there is no estimate to compare against"
+                .to_string(),
+        );
+    };
+    let samples = report
+        .results
+        .iter()
+        .filter(|r| r.estimate_ratio.is_some())
+        .count();
+
+    let mut config = Config::load();
+    let previous = config.calibration.as_ref().map(|c| c.efficiency);
+    config.calibration = Some(Calibration {
+        efficiency,
+        samples,
+        measured_at: crate::config::now_unix(),
+        gpu: session.hw.primary_gpu_name(),
+        backend: session.hw.backend.label().to_string(),
+    });
+    config.save()?;
+
+    let from = previous.unwrap_or(session.cfg.efficiency);
+    eprintln!(
+        "calibrated: efficiency {from:.2} → {efficiency:.2}, from {samples} measurement{} on {}",
+        if samples == 1 { "" } else { "s" },
+        session.hw.primary_gpu_name()
+    );
+    Ok(())
+}
+
+/// Report on a model file, exiting non-zero when it is damaged.
+///
+/// The exit code is the point for scripts: this is the check worth running
+/// after a download and before a long job that would only fail later.
+fn cmd_verify(cli: &Cli, file: &std::path::Path) -> Result<(), String> {
+    let report = verify::verify(file)?;
+    if cli.json {
+        println!("{}", display::to_json(&report));
+    } else {
+        print!("{}", display::render_verify(&report));
+    }
+    if report.is_intact() {
+        Ok(())
+    } else {
+        Err(format!("{} is not intact", file.display()))
+    }
+}
+
+/// Speak MCP on stdin/stdout until the client closes the stream.
+///
+/// stdout belongs to the protocol here, so the startup line goes to stderr —
+/// clients capture it as a log, and anything else on stdout would be read as
+/// a malformed message.
+fn cmd_mcp(session: Session) -> Result<(), String> {
+    let Session {
+        hw,
+        db,
+        cfg,
+        target,
+        ..
+    } = session;
+    eprintln!(
+        "llmspec MCP server on stdio ({} models, {})",
+        db.len(),
+        hw.backend.label()
+    );
+    let mut server = mcp::Mcp::new(hw, db, cfg, target);
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    server.run(&mut stdin.lock(), &mut stdout.lock())
 }
 
 /// No subcommand: the TUI, unless output was asked for in text or JSON.
@@ -555,6 +831,18 @@ fn parse_quant(raw: &str) -> Result<Quant, String> {
 
 fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
     let mut hw = Hardware::detect();
+    // The named card first, so `--memory` can still resize it: a 3090 with
+    // 20 GB is a question someone might reasonably ask of a used listing.
+    if let Some(name) = &cli.gpu {
+        // RAM is read before the card is placed, since a simulated Mac sizes
+        // its VRAM from the unified pool.
+        if let Some(raw) = &cli.ram {
+            let ram = parse_size_gb(raw)?;
+            hw.total_ram_gb = ram;
+            hw.available_ram_gb = ram;
+        }
+        hw.simulate_gpu(name, cli.gpu_count)?;
+    }
     let vram = cli.memory.as_deref().map(parse_size_gb).transpose()?;
     let ram = cli.ram.as_deref().map(parse_size_gb).transpose()?;
     hw.apply_overrides(vram, ram, cli.cpu_cores);
@@ -609,6 +897,8 @@ fn catalog_for(db: &ModelDb, runtime: Option<RuntimeKind>) -> Vec<models::Model>
 struct BenchTarget {
     reference: String,
     params_b: Option<f64>,
+    /// The quantization the runtime reports holding the weights at.
+    quantization: Option<String>,
 }
 
 impl From<InstalledModel> for BenchTarget {
@@ -616,6 +906,7 @@ impl From<InstalledModel> for BenchTarget {
         BenchTarget {
             reference: model.name,
             params_b: model.params_b,
+            quantization: model.quantization,
         }
     }
 }
@@ -625,15 +916,17 @@ fn bench_targets(client: &Runtime, query: &str, all: bool) -> Result<Vec<BenchTa
     // A named model is benchmarked whether or not the runtime lists it, but
     // the listing is still worth consulting for the size it reports.
     if !query.is_empty() && !all {
-        let params_b = client.list_models().ok().and_then(|installed| {
+        let listed = client.list_models().ok().and_then(|installed| {
             installed
                 .into_iter()
                 .find(|m| m.name.eq_ignore_ascii_case(query))
-                .and_then(|m| m.params_b)
         });
         return Ok(vec![BenchTarget {
             reference: query.to_string(),
-            params_b,
+            params_b: listed.as_ref().and_then(|m| m.params_b),
+            quantization: listed
+                .and_then(|m| m.quantization)
+                .or_else(|| providers::quantization_in_name(query)),
         }]);
     }
 

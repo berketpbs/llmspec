@@ -6,7 +6,7 @@
 
 use serde::Serialize;
 
-use crate::fit::FitResult;
+use crate::fit::{PER_TOKEN_OVERHEAD_S, RunMode};
 use crate::hardware::Hardware;
 use crate::providers::{DiscoveredRuntime, ProviderRegistry, Runtime, RuntimeKind, Sample};
 
@@ -58,7 +58,12 @@ pub struct BenchResult {
 pub struct Assumptions {
     pub catalog_id: String,
     pub quantization: &'static str,
+    /// `runtime` when the runtime reported the quantization it loaded, and
+    /// the estimate was made for exactly those bytes; `placement` when it did
+    /// not say, and llmspec's own choice had to stand in.
+    pub quantization_source: &'static str,
     pub context: u32,
+    pub run_mode: RunMode,
     /// Weight bytes the speed model assumed are read per token.
     pub weights_gb: f64,
 }
@@ -89,23 +94,47 @@ impl BenchReport {
 
 /// The efficiency factor that would reconcile estimate with measurement.
 ///
-/// The speed model is linear in `efficiency`, so scaling the current value by
-/// the median measured/estimated ratio lands the estimate on the measurement.
-/// Calibrating from the median rather than a single run keeps one unlucky
-/// benchmark from moving the setting.
+/// Efficiency scales only the time spent reading weights, not the fixed
+/// per-token overhead, so the correction is the ratio of the *read* times:
+/// what the estimate spent reading against what the measurement left after
+/// the overhead. Calibrating from the median rather than a single run keeps
+/// one unlucky benchmark from moving the setting.
+///
+/// Only runs placed entirely on the GPU are used. The factor being fitted is
+/// the GPU's; a split run mixes in system memory, whose speed has its own
+/// factor, and would drag the GPU's towards it.
 fn suggested_efficiency(results: &[BenchResult], current: f64) -> Option<f64> {
-    let mut ratios: Vec<f64> = results
+    let mut corrections: Vec<f64> = results
         .iter()
-        .filter_map(|r| r.estimate_ratio)
-        .filter(|r| r.is_finite() && *r > 0.0)
+        .filter(|r| {
+            r.assumed
+                .as_ref()
+                .is_some_and(|a| a.run_mode == RunMode::Gpu)
+        })
+        .filter_map(|r| {
+            let estimated = r.estimated_tps.filter(|e| *e > 0.0)?;
+            let measured = Some(r.tokens_per_second).filter(|m| *m > 0.0)?;
+            let estimated_read = 1.0 / estimated - PER_TOKEN_OVERHEAD_S;
+            let measured_read = 1.0 / measured - PER_TOKEN_OVERHEAD_S;
+            if estimated_read <= 0.0 {
+                return None;
+            }
+            // A measurement faster than the overhead alone allows is off the
+            // scale; it can only say the card is at least as good as rated.
+            Some(if measured_read <= 0.0 {
+                f64::INFINITY
+            } else {
+                estimated_read / measured_read
+            })
+        })
         .collect();
-    if ratios.is_empty() {
+    if corrections.is_empty() {
         return None;
     }
-    ratios.sort_by(f64::total_cmp);
+    corrections.sort_by(f64::total_cmp);
     // The efficiency factor is a fraction of peak bandwidth, so it cannot
     // exceed 1.0 however fast the measurement was.
-    Some((current * median(&ratios)).clamp(0.01, 1.0))
+    Some((current * median(&corrections)).clamp(0.01, 1.0))
 }
 
 /// The parts of the machine a benchmark number is only meaningful alongside.
@@ -207,18 +236,12 @@ fn summarize(model_ref: &str, kind: RuntimeKind, samples: &[Sample]) -> BenchRes
 }
 
 /// Attach llmspec's own prediction so the two can be compared.
-pub fn attach_estimate(result: &mut BenchResult, analysis: &FitResult, weights_gb: f64) {
-    let estimated = analysis.tokens_per_second;
+pub fn attach_estimate(result: &mut BenchResult, assumed: Assumptions, estimated: f64) {
     result.estimated_tps = Some(estimated);
     if estimated > 0.0 {
         result.estimate_ratio = Some(result.tokens_per_second / estimated);
     }
-    result.assumed = Some(Assumptions {
-        catalog_id: analysis.model_id.clone(),
-        quantization: analysis.quant.label(),
-        context: analysis.context,
-        weights_gb,
-    });
+    result.assumed = Some(assumed);
 }
 
 /// Median of an already-sorted slice.
@@ -275,25 +298,32 @@ mod tests {
         assert!(result.ttft_seconds.is_none());
     }
 
-    /// An analysis whose predicted throughput is `tps`.
-    fn analysis(tps: f64) -> FitResult {
-        use crate::fit::{self, SpeedConfig};
-        use crate::hardware::Hardware;
-        use crate::models::{ModelDb, UseCase};
+    /// What an estimate for a fully GPU-resident run assumed.
+    fn assumed(mode: RunMode) -> Assumptions {
+        Assumptions {
+            catalog_id: "Qwen/Qwen3-8B".to_string(),
+            quantization: "Q4_K_M",
+            quantization_source: "runtime",
+            context: 4096,
+            run_mode: mode,
+            weights_gb: 4.6,
+        }
+    }
 
-        let db = ModelDb::embedded();
-        let model = db.find("Qwen/Qwen3-8B").unwrap();
-        let mut hw = Hardware::detect();
-        hw.apply_overrides(Some(24.0), Some(64.0), None);
-        let mut result = fit::analyze(model, &hw, UseCase::General, &SpeedConfig::default());
-        result.tokens_per_second = tps;
-        result
+    fn summary() -> HardwareSummary {
+        HardwareSummary {
+            cpu: "test".into(),
+            gpu: "test".into(),
+            vram_gb: 24.0,
+            ram_gb: 64.0,
+            backend: "CUDA",
+        }
     }
 
     #[test]
     fn estimate_ratio_compares_measured_against_predicted() {
         let mut result = summarize("test", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
-        attach_estimate(&mut result, &analysis(25.0), 4.6);
+        attach_estimate(&mut result, assumed(RunMode::Gpu), 25.0);
         // 50 measured against 25 estimated: the model was twice as fast.
         assert!((result.estimate_ratio.unwrap() - 2.0).abs() < 1e-6);
     }
@@ -304,20 +334,20 @@ mod tests {
         // tell whether the model is wrong or the runtime simply loaded a
         // different quantization.
         let mut result = summarize("test", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
-        let analysis = analysis(25.0);
-        attach_estimate(&mut result, &analysis, 4.6);
+        attach_estimate(&mut result, assumed(RunMode::Gpu), 25.0);
 
         let assumed = result.assumed.expect("assumptions recorded");
         assert_eq!(assumed.catalog_id, "Qwen/Qwen3-8B");
-        assert_eq!(assumed.quantization, analysis.quant.label());
-        assert_eq!(assumed.context, analysis.context);
+        assert_eq!(assumed.quantization, "Q4_K_M");
+        assert_eq!(assumed.quantization_source, "runtime");
+        assert_eq!(assumed.context, 4096);
         assert!((assumed.weights_gb - 4.6).abs() < 1e-9);
     }
 
     #[test]
     fn estimate_ratio_is_skipped_when_prediction_is_zero() {
         let mut result = summarize("test", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
-        attach_estimate(&mut result, &analysis(0.0), 4.6);
+        attach_estimate(&mut result, assumed(RunMode::Gpu), 0.0);
         assert!(result.estimate_ratio.is_none());
         assert_eq!(result.estimated_tps, Some(0.0));
         // The assumptions are still worth recording.
@@ -325,23 +355,33 @@ mod tests {
     }
 
     #[test]
-    fn calibration_scales_the_efficiency_by_the_median_ratio() {
-        // Two runs twice as fast as predicted mean the efficiency factor was
-        // half what this machine actually achieves.
+    fn calibration_corrects_the_read_time_not_the_overhead() {
+        // Estimated 25 tok/s, measured 50. Efficiency scales only the part of
+        // each token spent reading weights, so the correction is the ratio of
+        // read times, not the ratio of rates.
         let mut fast = summarize("a", RuntimeKind::Ollama, &[sample(100, 2.0, None)]);
-        attach_estimate(&mut fast, &analysis(25.0), 4.6);
-        let report = BenchReport::new(
-            HardwareSummary {
-                cpu: "test".into(),
-                gpu: "test".into(),
-                vram_gb: 24.0,
-                ram_gb: 64.0,
-                backend: "CUDA",
-            },
-            vec![fast],
-            0.4,
-        );
-        assert!((report.suggested_efficiency.unwrap() - 0.8).abs() < 1e-9);
+        attach_estimate(&mut fast, assumed(RunMode::Gpu), 25.0);
+        let report = BenchReport::new(summary(), vec![fast], 0.4);
+
+        let expected =
+            0.4 * (1.0 / 25.0 - PER_TOKEN_OVERHEAD_S) / (1.0 / 50.0 - PER_TOKEN_OVERHEAD_S);
+        assert!((report.suggested_efficiency.unwrap() - expected).abs() < 1e-9);
+        // And that lands the formula on the measurement: with the corrected
+        // efficiency the read time halves, overhead unchanged.
+        let corrected_rate = 1.0
+            / ((1.0 / 25.0 - PER_TOKEN_OVERHEAD_S) * 0.4 / report.suggested_efficiency.unwrap()
+                + PER_TOKEN_OVERHEAD_S);
+        assert!((corrected_rate - 50.0).abs() < 1e-6, "{corrected_rate}");
+    }
+
+    #[test]
+    fn calibration_ignores_runs_that_read_from_system_memory() {
+        // The factor being fitted is the GPU's; a split run would drag it
+        // towards the speed of system RAM.
+        let mut split = summarize("a", RuntimeKind::Ollama, &[sample(100, 20.0, None)]);
+        attach_estimate(&mut split, assumed(RunMode::CpuGpu), 25.0);
+        let report = BenchReport::new(summary(), vec![split], 0.8);
+        assert!(report.suggested_efficiency.is_none());
     }
 
     #[test]
@@ -349,18 +389,8 @@ mod tests {
         // Efficiency is a fraction of peak, so no measurement can push it
         // past 1.0 however fast the run was.
         let mut fast = summarize("a", RuntimeKind::Ollama, &[sample(1000, 1.0, None)]);
-        attach_estimate(&mut fast, &analysis(10.0), 4.6);
-        let report = BenchReport::new(
-            HardwareSummary {
-                cpu: "test".into(),
-                gpu: "test".into(),
-                vram_gb: 24.0,
-                ram_gb: 64.0,
-                backend: "CUDA",
-            },
-            vec![fast],
-            0.55,
-        );
+        attach_estimate(&mut fast, assumed(RunMode::Gpu), 10.0);
+        let report = BenchReport::new(summary(), vec![fast], 0.55);
         assert_eq!(report.suggested_efficiency, Some(1.0));
     }
 

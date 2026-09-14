@@ -35,16 +35,24 @@ impl Backend {
         }
     }
 
-    /// Constant `K` of the fallback throughput model `K / params_b`, used when
-    /// the GPU's real memory bandwidth is unknown.
-    pub fn speed_constant(self) -> f64 {
+    /// Memory bandwidth assumed for a card missing from the table, in GB/s.
+    ///
+    /// Deliberately the low end of what each backend ships on today — an entry
+    /// level card rather than a typical one — so an unrecognised GPU is never
+    /// promised a speed it might not have. The estimate still follows the same
+    /// bandwidth arithmetic as a recognised card; only the input is a guess,
+    /// and `doctor` says so.
+    ///
+    /// The CPU backends only reach here for a GPU that reports no backend of
+    /// its own, where the most honest assumption is that it reads no faster
+    /// than dual-channel system memory.
+    pub fn assumed_bandwidth_gb_s(self) -> f64 {
         match self {
-            Backend::Cuda => 220.0,
-            Backend::Metal => 160.0,
-            Backend::Rocm => 180.0,
-            Backend::Sycl => 100.0,
-            Backend::CpuArm => 90.0,
-            Backend::CpuX86 => 70.0,
+            Backend::Cuda => 256.0,
+            Backend::Rocm => 224.0,
+            Backend::Metal => 120.0,
+            Backend::Sycl => 186.0,
+            Backend::CpuArm | Backend::CpuX86 => CPU_MEM_BANDWIDTH_FALLBACK_GB_S,
         }
     }
 }
@@ -130,11 +138,29 @@ const GPU_TABLE: &[GpuSpec] = &[
     gpu("a10", "A10", 600.0, 24.0),
     gpu("v100", "V100", 900.0, 32.0),
     gpu("t4", "T4", 320.0, 16.0),
+    gpu("p100", "Tesla P100", 732.0, 16.0),
+    gpu("p40", "Tesla P40", 346.0, 24.0),
+    gpu("rtx pro 6000", "RTX PRO 6000 Blackwell", 1792.0, 96.0),
     gpu("rtx 6000 ada", "RTX 6000 Ada", 960.0, 48.0),
+    gpu("rtx 5880 ada", "RTX 5880 Ada", 960.0, 48.0),
+    gpu("rtx 5000 ada", "RTX 5000 Ada", 576.0, 32.0),
+    gpu("rtx 4500 ada", "RTX 4500 Ada", 432.0, 24.0),
+    gpu("rtx 4000 ada", "RTX 4000 Ada", 360.0, 20.0),
+    gpu("rtx 2000 ada", "RTX 2000 Ada", 224.0, 16.0),
     gpu("rtx a6000", "RTX A6000", 768.0, 48.0),
     gpu("rtx a5000", "RTX A5000", 768.0, 24.0),
     gpu("rtx a4000", "RTX A4000", 448.0, 16.0),
-    // NVIDIA RTX 50 series
+    gpu("rtx a2000", "RTX A2000", 288.0, 12.0),
+    // Grace-Blackwell desktop (DGX Spark): one LPDDR5X pool for CPU and GPU.
+    gpu("gb10", "GB10", 273.0, 128.0),
+    // NVIDIA RTX 50 series. Laptop parts carry narrower memory buses than the
+    // desktop cards they share a number with, so they are listed separately
+    // and ahead of them.
+    gpu("5090 laptop", "RTX 5090 Laptop", 896.0, 24.0),
+    gpu("5080 laptop", "RTX 5080 Laptop", 672.0, 16.0),
+    gpu("5070 ti laptop", "RTX 5070 Ti Laptop", 672.0, 12.0),
+    gpu("5070 laptop", "RTX 5070 Laptop", 448.0, 8.0),
+    gpu("5060 laptop", "RTX 5060 Laptop", 448.0, 8.0),
     gpu("5090", "RTX 5090", 1792.0, 32.0),
     gpu("5080", "RTX 5080", 960.0, 16.0),
     gpu("5070 ti", "RTX 5070 Ti", 896.0, 16.0),
@@ -157,6 +183,13 @@ const GPU_TABLE: &[GpuSpec] = &[
     gpu("4060 ti", "RTX 4060 Ti", 288.0, 16.0),
     gpu("4060", "RTX 4060", 272.0, 8.0),
     // NVIDIA RTX 30 series
+    gpu("3080 ti laptop", "RTX 3080 Ti Laptop", 448.0, 16.0),
+    gpu("3080 laptop", "RTX 3080 Laptop", 448.0, 16.0),
+    gpu("3070 ti laptop", "RTX 3070 Ti Laptop", 448.0, 8.0),
+    gpu("3070 laptop", "RTX 3070 Laptop", 448.0, 8.0),
+    gpu("3060 laptop", "RTX 3060 Laptop", 336.0, 6.0),
+    gpu("3050 ti laptop", "RTX 3050 Ti Laptop", 192.0, 4.0),
+    gpu("3050 laptop", "RTX 3050 Laptop", 192.0, 4.0),
     gpu("3090 ti", "RTX 3090 Ti", 1008.0, 24.0),
     gpu("3090", "RTX 3090", 936.0, 24.0),
     gpu("3080 ti", "RTX 3080 Ti", 912.0, 12.0),
@@ -168,13 +201,24 @@ const GPU_TABLE: &[GpuSpec] = &[
     gpu("3050", "RTX 3050", 224.0, 8.0),
     // NVIDIA RTX 20 / GTX
     gpu("2080 ti", "RTX 2080 Ti", 616.0, 11.0),
+    gpu("2080 super", "RTX 2080 Super", 496.0, 8.0),
     gpu("2080", "RTX 2080", 448.0, 8.0),
     gpu("2070", "RTX 2070", 448.0, 8.0),
+    gpu("2060 super", "RTX 2060 Super", 448.0, 8.0),
     gpu("2060", "RTX 2060", 336.0, 6.0),
     gpu("1080 ti", "GTX 1080 Ti", 484.0, 11.0),
     gpu("1080", "GTX 1080", 320.0, 8.0),
+    gpu("1070 ti", "GTX 1070 Ti", 256.0, 8.0),
     gpu("1070", "GTX 1070", 256.0, 8.0),
+    gpu("1660 super", "GTX 1660 Super", 336.0, 6.0),
+    gpu("1660 ti", "GTX 1660 Ti", 288.0, 6.0),
     gpu("1660", "GTX 1660", 192.0, 6.0),
+    gpu("1650 super", "GTX 1650 Super", 192.0, 4.0),
+    // The Max-Q and GDDR5 parts are the common laptop configuration.
+    gpu("1650", "GTX 1650", 128.0, 4.0),
+    gpu("1060", "GTX 1060", 192.0, 6.0),
+    gpu("1050 ti", "GTX 1050 Ti", 112.0, 4.0),
+    gpu("1050", "GTX 1050", 112.0, 2.0),
     // AMD
     gpu("mi300x", "MI300X", 5300.0, 192.0),
     gpu("mi250x", "MI250X", 3276.0, 128.0),
@@ -183,16 +227,26 @@ const GPU_TABLE: &[GpuSpec] = &[
     gpu("mi100", "MI100", 1229.0, 32.0),
     gpu("9070 xt", "RX 9070 XT", 645.0, 16.0),
     gpu("9070", "RX 9070", 645.0, 16.0),
+    gpu("9060 xt", "RX 9060 XT", 320.0, 16.0),
     gpu("7900 xtx", "RX 7900 XTX", 960.0, 24.0),
     gpu("7900 xt", "RX 7900 XT", 800.0, 20.0),
+    gpu("7900 gre", "RX 7900 GRE", 576.0, 16.0),
     gpu("7800 xt", "RX 7800 XT", 624.0, 16.0),
     gpu("7700 xt", "RX 7700 XT", 432.0, 12.0),
+    gpu("7600 xt", "RX 7600 XT", 288.0, 16.0),
     gpu("7600", "RX 7600", 288.0, 8.0),
     gpu("6950 xt", "RX 6950 XT", 576.0, 16.0),
     gpu("6900 xt", "RX 6900 XT", 512.0, 16.0),
     gpu("6800 xt", "RX 6800 XT", 512.0, 16.0),
+    gpu("6800", "RX 6800", 512.0, 16.0),
+    gpu("6750 xt", "RX 6750 XT", 432.0, 12.0),
     gpu("6700 xt", "RX 6700 XT", 384.0, 12.0),
+    gpu("6650 xt", "RX 6650 XT", 280.0, 8.0),
+    gpu("6600 xt", "RX 6600 XT", 256.0, 8.0),
     gpu("6600", "RX 6600", 224.0, 8.0),
+    // Strix Halo APUs: a 256-bit LPDDR5X-8000 pool shared with the CPU.
+    gpu("8060s", "Radeon 8060S", 256.0, 96.0),
+    gpu("8050s", "Radeon 8050S", 256.0, 96.0),
     // Intel
     gpu("arc b580", "Arc B580", 456.0, 12.0),
     gpu("arc a770", "Arc A770", 560.0, 16.0),
@@ -202,6 +256,9 @@ const GPU_TABLE: &[GpuSpec] = &[
     gpu("arc b570", "Arc B570", 380.0, 10.0),
     // Apple Silicon. The VRAM column is the base configuration; real machines
     // are sized from the unified memory pool at detection time.
+    gpu("m5 max", "M5 Max", 614.0, 36.0),
+    gpu("m5 pro", "M5 Pro", 307.0, 24.0),
+    gpu("m5", "M5", 153.0, 16.0),
     gpu("m4 max", "M4 Max", 546.0, 36.0),
     gpu("m4 pro", "M4 Pro", 273.0, 24.0),
     gpu("m4", "M4", 120.0, 16.0),
@@ -264,11 +321,61 @@ fn matches_fragment(name: &str, fragment: &str) -> bool {
     words.windows(wanted.len()).any(|window| window == wanted)
 }
 
-fn lookup_gpu(name: &str) -> Option<&'static GpuSpec> {
+/// The vendor a table entry belongs to, read from its display name.
+///
+/// The table is grouped by vendor but carries no vendor field, and the display
+/// names are distinctive enough that one is not needed: every NVIDIA part is
+/// written with its product line, every Apple part starts with the chip family.
+fn vendor_of(spec: &GpuSpec) -> Vendor {
+    let name = spec.display;
+    if name.starts_with("RX ") || name.starts_with("MI") || name.starts_with("Radeon") {
+        Vendor::Amd
+    } else if name.starts_with("Arc ") {
+        Vendor::Intel
+    } else if name.starts_with('M') && name.len() <= 8 {
+        Vendor::Apple
+    } else {
+        Vendor::Nvidia
+    }
+}
+
+pub(crate) fn lookup_gpu(name: &str) -> Option<&'static GpuSpec> {
     let normalized = normalize_gpu_name(name);
     GPU_TABLE
         .iter()
         .find(|spec| matches_fragment(&normalized, spec.fragment))
+}
+
+/// A card from the reference table, as listed by `llmspec gpus`.
+#[derive(Debug, Clone, Serialize)]
+pub struct KnownGpu {
+    pub name: &'static str,
+    pub vendor: Vendor,
+    pub vram_gb: f64,
+    pub bandwidth_gb_s: f64,
+    pub unified_memory: bool,
+}
+
+/// Every card in the table whose name contains `filter`, fastest first.
+pub fn known_gpus(filter: &str) -> Vec<KnownGpu> {
+    let wanted = normalize_gpu_name(filter);
+    let mut cards: Vec<KnownGpu> = GPU_TABLE
+        .iter()
+        .filter(|spec| wanted.is_empty() || normalize_gpu_name(spec.display).contains(&wanted))
+        .map(|spec| {
+            let vendor = vendor_of(spec);
+            KnownGpu {
+                name: spec.display,
+                vendor,
+                vram_gb: spec.vram_gb,
+                bandwidth_gb_s: spec.bandwidth_gb_s,
+                unified_memory: vendor == Vendor::Apple
+                    || ["GB10", "Radeon 8060S", "Radeon 8050S"].contains(&spec.display),
+            }
+        })
+        .collect();
+    cards.sort_by(|a, b| b.bandwidth_gb_s.total_cmp(&a.bandwidth_gb_s));
+    cards
 }
 
 /// Cards from the reference table that clear both bars, slowest first.
@@ -319,6 +426,28 @@ pub struct Hardware {
     pub ram_bandwidth_gb_s: Option<f64>,
     /// True when any value was overridden via flags or the TUI simulator.
     pub simulated: bool,
+    /// Throughput `bench` measured on this machine, which outranks any
+    /// estimate for the same model, quantization and run mode.
+    ///
+    /// Cleared whenever a value is simulated: a measurement describes the
+    /// machine it was taken on, and a simulated machine is a different one.
+    #[serde(skip)]
+    pub measured: Vec<MeasuredThroughput>,
+}
+
+/// Decode throughput measured by `bench` on this machine.
+///
+/// Written with plain strings rather than the fit engine's enums because it is
+/// read back from disk, where a quantization this build does not know should
+/// simply never match rather than fail to load.
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+pub struct MeasuredThroughput {
+    pub model_id: String,
+    pub quant: String,
+    pub run_mode: String,
+    pub tokens_per_second: f64,
+    /// Seconds since the Unix epoch.
+    pub measured_at: u64,
 }
 
 impl Hardware {
@@ -343,7 +472,18 @@ impl Hardware {
             // machine, so the CPU figure is the shipped constant.
             ram_bandwidth_gb_s: None,
             simulated: true,
+            measured: Vec::new(),
         }
+    }
+
+    /// The measured throughput for one placement, when `bench` recorded one.
+    pub fn measured_tps(&self, model_id: &str, quant: &str, run_mode: &str) -> Option<f64> {
+        self.measured
+            .iter()
+            .filter(|m| m.model_id == model_id && m.quant == quant && m.run_mode == run_mode)
+            .max_by_key(|m| m.measured_at)
+            .map(|m| m.tokens_per_second)
+            .filter(|tps| *tps > 0.0)
     }
 
     /// A reference GPU with the given bandwidth and enough VRAM to hold
@@ -373,6 +513,22 @@ impl Hardware {
 
     pub fn has_gpu(&self) -> bool {
         !self.gpus.is_empty() && self.total_vram_gb() > 0.0
+    }
+
+    /// True when the GPU draws on the same memory as the CPU.
+    ///
+    /// Apple Silicon, Grace-Blackwell and Strix Halo machines have one pool:
+    /// what the GPU is given is taken from system RAM, so there is no second
+    /// pool for a model to spill into.
+    pub fn unified_memory(&self) -> bool {
+        self.gpus.first().is_some_and(|g| {
+            g.vendor == Vendor::Apple || {
+                let name = normalize_gpu_name(&g.name);
+                ["gb10", "8060s", "8050s"]
+                    .iter()
+                    .any(|part| matches_fragment(&name, part))
+            }
+        })
     }
 
     /// Main-memory bandwidth, measured if known and assumed otherwise.
@@ -456,7 +612,14 @@ impl Hardware {
             // between runs, so detection leaves it to the caller to fill in.
             ram_bandwidth_gb_s: None,
             simulated: false,
+            measured: Vec::new(),
         }
+    }
+
+    /// Mark the machine as simulated, dropping anything measured on the real one.
+    fn mark_simulated(&mut self) {
+        self.simulated = true;
+        self.measured.clear();
     }
 
     /// Apply CLI overrides (`--memory`, `--ram`, `--cpu-cores`).
@@ -469,17 +632,51 @@ impl Hardware {
         if let Some(ram) = ram_gb {
             self.total_ram_gb = ram;
             self.available_ram_gb = ram;
-            self.simulated = true;
+            self.mark_simulated();
         }
         if let Some(cores) = cpu_cores {
             self.cpu_cores = cores;
             self.cpu_threads = self.cpu_threads.max(cores);
-            self.simulated = true;
+            self.mark_simulated();
         }
         if let Some(vram) = vram_gb {
             self.set_vram(vram);
-            self.simulated = true;
+            self.mark_simulated();
         }
+    }
+
+    /// Replace the detected GPUs with `count` of a card named from the table.
+    ///
+    /// `--memory` can say how much VRAM a machine has but not how fast it is,
+    /// and throughput is the half of the answer that depends on the card. A
+    /// synthetic GPU with no bandwidth is read at its backend's assumed
+    /// bandwidth, which is exactly the coarse estimate simulation is meant to
+    /// avoid. Naming the
+    /// card brings its real bandwidth, VRAM and backend along with it.
+    ///
+    /// Apple Silicon is sized from the unified pool, as detection does, so the
+    /// simulated Mac gets the VRAM the OS would actually wire.
+    pub fn simulate_gpu(&mut self, name: &str, count: usize) -> Result<(), String> {
+        let spec = lookup_gpu(name).ok_or_else(|| {
+            format!("unknown GPU '{name}' (try a model name such as \"RTX 3090\" or \"M4 Pro\")")
+        })?;
+        let vendor = vendor_of(spec);
+        let vram_gb = if vendor == Vendor::Apple {
+            (self.total_ram_gb * APPLE_UNIFIED_VRAM_FRACTION).max(0.0)
+        } else {
+            spec.vram_gb
+        };
+        let card = Gpu {
+            name: spec.display.to_string(),
+            vendor,
+            vram_gb,
+            bandwidth_gb_s: Some(spec.bandwidth_gb_s),
+            vram_estimated: true,
+        };
+        self.gpus = vec![card; count.max(1)];
+        self.backend = backend_for(&self.gpus, &self.arch);
+        self.mark_simulated();
+        Ok(())
     }
 
     /// Force total VRAM to `vram_gb`, synthesising a GPU when none was found.
@@ -630,6 +827,9 @@ fn detect_amd() -> Vec<Gpu> {
             })
             .map(ToString::to_string)
             .unwrap_or_else(|| "AMD GPU".to_string());
+        if is_integrated_gpu(&name) {
+            continue;
+        }
         // VRAM is reported in bytes by `--showmeminfo vram`.
         let vram_gb = fields
             .iter()
@@ -666,6 +866,7 @@ fn detect_intel() -> Vec<Gpu> {
             let lower = l.to_ascii_lowercase();
             lower.contains("vga") && lower.contains("intel") && lower.contains("arc")
         })
+        .filter(|line| !is_integrated_gpu(line.split(':').next_back().unwrap_or("")))
         .map(|line| {
             let name = line
                 .split(':')
@@ -719,7 +920,7 @@ fn detect_windows_gpus(vendor: Vendor) -> Vec<Gpu> {
 fn parse_windows_adapter(line: &str, vendor: Vendor) -> Option<Gpu> {
     let (name, size) = line.split_once('|')?;
     let name = name.trim();
-    if name.is_empty() || !matches_vendor(name, vendor) {
+    if name.is_empty() || !matches_vendor(name, vendor) || is_integrated_gpu(name) {
         return None;
     }
     let table = lookup_gpu(name);
@@ -735,6 +936,34 @@ fn parse_windows_adapter(line: &str, vendor: Vendor) -> Option<Gpu> {
         bandwidth_gb_s: table.map(|spec| spec.bandwidth_gb_s),
         vram_estimated: estimated,
     })
+}
+
+/// True for a GPU built into the CPU package and sharing its memory.
+///
+/// These are not worth placing a model on as though they were a card: the
+/// "VRAM" a Radeon 780M or an Iris Xe reports is a slice of system RAM set
+/// aside by the firmware, often 512 MB, and reading weights from it is no
+/// faster than the CPU reading them from the rest of RAM. Counting one as a
+/// GPU put a 7B model at "1 GB VRAM, CPU+GPU" on a discrete card's assumed
+/// speed, and over-promised it fivefold. Strix Halo is the exception worth keeping — it is
+/// integrated, but it is in the bandwidth table as the unified-memory part it
+/// is — so anything the table recognises is left alone.
+fn is_integrated_gpu(name: &str) -> bool {
+    if lookup_gpu(name).is_some() {
+        return false;
+    }
+    let lower = normalize_gpu_name(name);
+    let words: Vec<&str> = lower.split(' ').collect();
+    // Ryzen APU graphics are named by a three-digit model with an M suffix
+    // ("Radeon 780M", "Radeon 890M") or not numbered at all ("Radeon Graphics").
+    let apu_model = words
+        .iter()
+        .any(|w| w.len() == 4 && w.ends_with('m') && w[..3].chars().all(|c| c.is_ascii_digit()));
+    let generic_radeon = lower.contains("radeon graphics") || lower.ends_with("radeon");
+    let intel_integrated = ["iris", "uhd graphics", "hd graphics", "arc graphics"]
+        .iter()
+        .any(|part| lower.contains(part));
+    apu_model || generic_radeon || intel_integrated
 }
 
 fn matches_vendor(name: &str, vendor: Vendor) -> bool {
@@ -756,10 +985,14 @@ fn matches_vendor(name: &str, vendor: Vendor) -> bool {
 
 /// System-memory bandwidth (GB/s) assumed when the machine cannot be measured.
 ///
-/// Roughly a dual-channel DDR4-3200 desktop: low enough not to promise
-/// throughput a slow machine cannot reach, high enough not to write off CPU
-/// inference on a fast one.
-pub const CPU_MEM_BANDWIDTH_FALLBACK_GB_S: f64 = 60.0;
+/// On the scale of [`measure_ram_bandwidth_gb_s`], not of a memory kit's rating:
+/// the probe reads from one thread and lands at about half the rated figure —
+/// 44 GB/s on DDR5-5600 rated at 89.6 — and the CPU efficiency is fitted
+/// against what the probe reports. A dual-channel DDR4-3200 machine rates at
+/// 51 GB/s, so its probe reads in the mid-20s. Measured CPU and hybrid decode
+/// on machines whose memory was not measured lands closest at 30; the 60 this
+/// used to be promised CPU-only laptops three times the speed they reach.
+pub const CPU_MEM_BANDWIDTH_FALLBACK_GB_S: f64 = 30.0;
 
 /// Buffer size for the bandwidth probe.
 ///
@@ -981,6 +1214,88 @@ mod tests {
     }
 
     #[test]
+    fn integrated_gpus_are_not_mistaken_for_cards() {
+        // Their "VRAM" is a slice of system RAM, so treating one as a GPU
+        // placed models on memory that reads no faster than the CPU's.
+        for name in [
+            "AMD Radeon 780M Graphics",
+            "AMD Radeon(TM) Graphics",
+            "Intel(R) Iris(R) Xe Graphics",
+            "Intel(R) UHD Graphics 630",
+            "Intel(R) Arc(TM) Graphics",
+            "AMD Radeon 890M",
+        ] {
+            assert!(is_integrated_gpu(name), "{name} should be integrated");
+            assert!(parse_windows_adapter(&format!("{name}|536870912"), Vendor::Amd).is_none());
+        }
+        for name in [
+            "AMD Radeon RX 7900 XTX",
+            "Intel(R) Arc(TM) A770 Graphics",
+            "NVIDIA GeForce RTX 4060 Laptop GPU",
+            // Integrated, but a unified-memory part the table knows.
+            "AMD Radeon 8060S",
+        ] {
+            assert!(!is_integrated_gpu(name), "{name} is a real accelerator");
+        }
+    }
+
+    #[test]
+    fn a_simulated_card_brings_its_bandwidth_vram_and_backend() {
+        let mut hw = Hardware::reference_cpu();
+        hw.total_ram_gb = 64.0;
+        hw.simulate_gpu("rtx 3090", 2).unwrap();
+        assert_eq!(hw.gpus.len(), 2);
+        assert_eq!(hw.total_vram_gb(), 48.0);
+        assert_eq!(hw.primary_bandwidth(), Some(936.0));
+        assert_eq!(hw.backend, Backend::Cuda);
+        assert!(!hw.unified_memory());
+
+        hw.simulate_gpu("M4 Max", 1).unwrap();
+        assert_eq!(hw.backend, Backend::Metal);
+        assert!(hw.unified_memory());
+        // Sized from the pool, as detection would, not from the table.
+        assert!((hw.total_vram_gb() - 48.0).abs() < 1e-9);
+
+        hw.simulate_gpu("Radeon 8060S", 1).unwrap();
+        assert_eq!(hw.backend, Backend::Rocm);
+        assert!(hw.unified_memory());
+
+        assert!(hw.simulate_gpu("Voodoo 5 6000", 1).is_err());
+    }
+
+    #[test]
+    fn every_card_in_the_table_maps_to_its_own_vendor() {
+        for spec in GPU_TABLE {
+            let expected = if spec.display.starts_with("RX ")
+                || spec.display.starts_with("MI")
+                || spec.display.starts_with("Radeon")
+            {
+                Vendor::Amd
+            } else if spec.display.starts_with("Arc ") {
+                Vendor::Intel
+            } else if spec.fragment.starts_with('m') && spec.fragment.len() <= 8 {
+                Vendor::Apple
+            } else {
+                Vendor::Nvidia
+            };
+            assert_eq!(vendor_of(spec), expected, "{}", spec.display);
+        }
+        // A laptop part matches ahead of the desktop card it shares a number with.
+        assert_eq!(
+            lookup_gpu("NVIDIA GeForce RTX 5070 Laptop GPU")
+                .unwrap()
+                .bandwidth_gb_s,
+            448.0
+        );
+        assert_eq!(
+            lookup_gpu("NVIDIA GeForce GTX 1050 Ti")
+                .unwrap()
+                .bandwidth_gb_s,
+            112.0
+        );
+    }
+
+    #[test]
     fn windows_adapter_lines_are_parsed() {
         let gpu = parse_windows_adapter("AMD Radeon RX 7900 XTX|25753026560", Vendor::Amd).unwrap();
         assert_eq!(gpu.vendor, Vendor::Amd);
@@ -1039,6 +1354,7 @@ mod tests {
             backend: Backend::CpuX86,
             ram_bandwidth_gb_s: None,
             simulated: false,
+            measured: Vec::new(),
         };
         hw.apply_overrides(Some(24.0), None, None);
         assert!(hw.has_gpu());

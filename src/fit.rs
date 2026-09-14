@@ -1,19 +1,42 @@
 //! Multi-dimensional scoring, speed estimation and fit analysis.
 //!
 //! LLM inference is memory-bandwidth bound: every generated token requires
-//! reading the active weights once. Throughput is therefore estimated as
-//! `bandwidth / bytes_read_per_token * efficiency`, falling back to a
-//! per-backend constant when the GPU's bandwidth is unknown.
+//! reading the active weights once. The time one token takes is the sum of
+//! the reads from each memory pool the weights live in, plus a fixed cost the
+//! runtime pays per token whatever the model's size:
+//!
+//! ```text
+//! seconds/token = gpu_bytes / (gpu_bandwidth × efficiency)
+//!               + ram_bytes / (ram_bandwidth × cpu_efficiency)
+//!               + per-token overhead
+//! ```
 
 use serde::Serialize;
 use std::fmt;
 
 use crate::hardware::Hardware;
-use crate::models::{BenchmarkDb, Model, Quant, UseCase, hint_list};
+use crate::models::{BenchmarkDb, KvQuant, Model, Quant, UseCase, hint_list};
 
-/// System memory bandwidth as a fraction of a typical discrete GPU's, used by
-/// the fallback throughput model when the GPU is unrecognised.
-const CPU_BANDWIDTH_RATIO: f64 = 0.2;
+/// Time a runtime spends on every token that is not a weight read: kernel
+/// launches, sampling, detokenisation and its own bookkeeping.
+///
+/// Small, but it is what bounds small models. Without it the bandwidth ratio
+/// alone promised 1,600 tok/s for a 135M model on a GTX 1050 Ti that measures
+/// 163, and ranked tiny models on speed nobody gets. Fitted jointly with
+/// [`SpeedConfig::efficiency`] against 162 single-request decode measurements
+/// across CUDA, ROCm and Metal, where it brought the median error from 29% to
+/// 9%; a sweep of GPU layer splits on one laptop recovers the same figure.
+pub const PER_TOKEN_OVERHEAD_S: f64 = 0.0022;
+
+/// Share of a mixture-of-experts model's per-token reads that are routed
+/// expert weights.
+///
+/// Expert offloading moves exactly these to system RAM; attention, the router,
+/// any shared expert and the output head stay on the card. The rest of the
+/// active set is read at GPU speed. For Qwen3-30B-A3B the routed experts are
+/// about 1.8B of the 3.0B read per token, and the other current designs land
+/// within a few points of the same split.
+const MOE_ROUTED_SHARE: f64 = 0.6;
 
 /// Fraction of VRAM a model may occupy and still count as a comfortable fit.
 const VRAM_COMFORTABLE: f64 = 0.95;
@@ -85,8 +108,11 @@ const MIN_CONTEXT: u32 = 4_096;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SpeedConfig {
-    /// Global efficiency factor for the bandwidth-based estimate.
+    /// Fraction of the GPU's rated memory bandwidth decoding actually achieves.
     pub efficiency: f64,
+    /// The same fraction for weights read from system RAM, against the
+    /// bandwidth llmspec measures on the machine.
+    pub cpu_efficiency: f64,
     pub gpu_factor: f64,
     pub cpu_offload_factor: f64,
     pub moe_offload_factor: f64,
@@ -94,20 +120,94 @@ pub struct SpeedConfig {
     pub cpu_only_factor: f64,
     /// Upper bound on the context used for memory estimation.
     pub context_cap: Option<u32>,
+    /// How the runtime stores the KV cache.
+    pub kv_quant: KvQuant,
+    /// True when `efficiency` was fitted by `bench --calibrate` on this
+    /// machine rather than shipped.
+    pub calibrated: bool,
 }
 
 impl Default for SpeedConfig {
+    /// The shipped speed model.
+    ///
+    /// `efficiency` and the per-token overhead were fitted together; the mode
+    /// factors are all 1.0 because the physics of each mode — which pool each
+    /// byte is read from — is in the estimate itself rather than applied as a
+    /// penalty afterwards. They remain as knobs for a runtime that does worse
+    /// than its memory allows.
+    ///
+    /// `cpu_efficiency` is 1.0 because it is relative to llmspec's own probe,
+    /// which streams from one thread and so reads lower than a multi-threaded
+    /// decode achieves. On a DDR5-5600 laptop the probe measures 44 GB/s, and a
+    /// sweep of CPU/GPU layer splits recovers 47 to 57 GB/s from the decode
+    /// itself.
     fn default() -> Self {
         SpeedConfig {
-            efficiency: 0.55,
+            efficiency: 0.80,
+            cpu_efficiency: 1.0,
             gpu_factor: 1.0,
-            cpu_offload_factor: 0.5,
-            moe_offload_factor: 0.8,
+            cpu_offload_factor: 1.0,
+            moe_offload_factor: 1.0,
             tensor_parallel_factor: 0.9,
-            cpu_only_factor: 0.3,
+            cpu_only_factor: 1.0,
             context_cap: None,
+            kv_quant: KvQuant::F16,
+            calibrated: false,
         }
     }
+}
+
+/// Where a throughput figure came from, most trustworthy first.
+///
+/// A measured 51 tok/s and a guessed 51 tok/s print identically, and a reader
+/// deciding whether to spend a 40 GB download deserves to know which one they
+/// are looking at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpeedSource {
+    /// `bench` measured this model, at this quantization and run mode, here.
+    Measured,
+    /// The speed model, with its efficiency fitted to measurements taken here.
+    Calibrated,
+    /// The speed model, from a known GPU bandwidth and measured system memory.
+    Estimated,
+    /// The speed model, with at least one input it had to assume: a GPU missing
+    /// from the bandwidth table, or system memory that could not be measured
+    /// for a placement that reads from it.
+    Assumed,
+}
+
+impl SpeedSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            SpeedSource::Measured => "measured",
+            SpeedSource::Calibrated => "calibrated",
+            SpeedSource::Estimated => "estimated",
+            SpeedSource::Assumed => "assumed",
+        }
+    }
+}
+
+/// The inputs a throughput figure was built from, so it can be reproduced or
+/// traced when it disagrees with a measurement.
+#[derive(Debug, Clone, Serialize)]
+pub struct EstimateBasis {
+    pub source: SpeedSource,
+    /// What the speed model predicts, whether or not a measurement replaced it.
+    pub formula_tps: f64,
+    pub gpu_bandwidth_gb_s: Option<f64>,
+    /// False when the GPU is missing from the table and its backend's
+    /// assumed bandwidth stood in.
+    pub gpu_bandwidth_known: bool,
+    pub ram_bandwidth_gb_s: f64,
+    pub ram_bandwidth_measured: bool,
+    /// Share of each token's weight reads served from VRAM.
+    pub gpu_read_share: f64,
+    /// Weight bytes read per token, in GB.
+    pub read_gb: f64,
+    pub efficiency: f64,
+    pub cpu_efficiency: f64,
+    pub kv_quant: KvQuant,
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +362,14 @@ pub struct FitResult {
     /// occupies on disk. Excludes the KV cache and runtime overhead, which
     /// exist only while the model is loaded.
     pub download_gb: f64,
+    /// Measured throughput when `bench` recorded one for this placement,
+    /// otherwise the estimate. [`EstimateBasis::source`] says which.
     pub tokens_per_second: f64,
+    pub estimate: EstimateBasis,
+    /// The longest context this placement's memory pool could hold, which can
+    /// exceed [`FitResult::context`]: the placement search may settle on less
+    /// context when more would have cost quantization quality or speed.
+    pub max_context_fit: u32,
     pub scores: Scores,
 }
 
@@ -317,16 +424,30 @@ struct Placement {
     required_gb: f64,
     resident_gb: f64,
     mem_percent: f64,
+    /// Share of the per-token weight reads served from VRAM; the rest come
+    /// across the system memory bus.
+    gpu_read_share: f64,
 }
 
-impl Placement {
-    /// Share of the footprint that stays on the accelerator.
-    fn gpu_fraction(&self) -> f64 {
-        if self.required_gb <= 0.0 {
-            return 1.0;
+/// The run modes worth trying on this machine, in the order a runtime would
+/// reach for them.
+///
+/// On unified memory there is no second pool to spill into: VRAM *is* system
+/// RAM, so offloading weights to "RAM" would count the same bytes twice and
+/// promise placements the machine cannot make.
+fn candidate_modes(model: &Model, hw: &Hardware) -> Vec<RunMode> {
+    let mut modes = Vec::with_capacity(4);
+    if hw.has_gpu() {
+        modes.push(RunMode::Gpu);
+        if !hw.unified_memory() {
+            if model.is_moe() {
+                modes.push(RunMode::Moe);
+            }
+            modes.push(RunMode::CpuGpu);
         }
-        (self.resident_gb / self.required_gb).clamp(0.0, 1.0)
     }
+    modes.push(RunMode::Cpu);
+    modes
 }
 
 /// Analyse one model against the given hardware.
@@ -344,6 +465,16 @@ pub fn analyze_with_benchmarks(
     benchmarks: &BenchmarkDb,
 ) -> FitResult {
     let (placement, tps, scores) = place(model, hw, target, cfg, benchmarks);
+    let formula_tps = estimate_tps(
+        model,
+        hw,
+        placement.quant,
+        placement.mode,
+        placement.gpu_read_share,
+        cfg,
+    );
+    let estimate = estimate_basis(model, hw, &placement, formula_tps, cfg);
+    let max_context_fit = max_context_fit(model, hw, &placement, cfg.kv_quant);
 
     FitResult {
         model_id: model.id.clone(),
@@ -366,8 +497,78 @@ pub fn analyze_with_benchmarks(
         mem_percent: placement.mem_percent,
         download_gb: model.weights_gb(placement.quant),
         tokens_per_second: tps,
+        estimate,
+        max_context_fit,
         scores,
     }
+}
+
+/// Record what a throughput figure rests on.
+fn estimate_basis(
+    model: &Model,
+    hw: &Hardware,
+    placement: &Placement,
+    formula_tps: f64,
+    cfg: &SpeedConfig,
+) -> EstimateBasis {
+    let reads_gpu = placement.mode != RunMode::Cpu;
+    let reads_ram = placement.gpu_read_share < 1.0 || placement.mode == RunMode::Cpu;
+    let gpu_known = hw.primary_bandwidth().is_some();
+    let measured = hw
+        .measured_tps(&model.id, placement.quant.label(), placement.mode.label())
+        .is_some();
+    let source = if measured {
+        SpeedSource::Measured
+    } else if (reads_gpu && !gpu_known) || (reads_ram && !hw.ram_bandwidth_measured()) {
+        SpeedSource::Assumed
+    } else if cfg.calibrated && reads_gpu {
+        SpeedSource::Calibrated
+    } else {
+        SpeedSource::Estimated
+    };
+    EstimateBasis {
+        source,
+        formula_tps,
+        gpu_bandwidth_gb_s: reads_gpu.then(|| {
+            hw.primary_bandwidth()
+                .unwrap_or_else(|| hw.backend.assumed_bandwidth_gb_s())
+        }),
+        gpu_bandwidth_known: gpu_known,
+        ram_bandwidth_gb_s: hw.ram_bandwidth(),
+        ram_bandwidth_measured: hw.ram_bandwidth_measured(),
+        gpu_read_share: match placement.mode {
+            RunMode::Cpu => 0.0,
+            RunMode::Gpu => 1.0,
+            _ => placement.gpu_read_share,
+        },
+        read_gb: bytes_read_per_token_gb(model, placement.quant),
+        efficiency: cfg.efficiency,
+        cpu_efficiency: cfg.cpu_efficiency,
+        kv_quant: cfg.kv_quant,
+    }
+}
+
+/// The longest context the chosen run mode's memory pool could hold at the
+/// chosen quantization.
+///
+/// The KV cache is the only part of the footprint that grows with context, so
+/// this is whatever the pool has left once the weights and the runtime's
+/// overhead are resident, spent on cache.
+fn max_context_fit(model: &Model, hw: &Hardware, placement: &Placement, kv: KvQuant) -> u32 {
+    if placement.fit == FitLevel::TooTight {
+        return 0;
+    }
+    let vram = hw.total_vram_gb() * VRAM_COMFORTABLE;
+    let ram = hw.usable_ram_gb();
+    let weights = model.weights_gb(placement.quant);
+    let (pool, resident) = match placement.mode {
+        RunMode::Gpu => (vram, weights),
+        RunMode::Moe => (vram, model.active_weights_gb(placement.quant)),
+        RunMode::CpuGpu => (hw.total_vram_gb() + ram, weights),
+        RunMode::Cpu => (ram, weights),
+    };
+    let budget = pool - resident - Model::overhead_gb(resident);
+    model.max_context_for(budget, kv)
 }
 
 /// Analyse every model and sort best-first, with unrunnable models last.
@@ -421,25 +622,24 @@ fn place(
     let vram = hw.total_vram_gb();
     let ram = hw.usable_ram_gb();
 
-    let mut modes = Vec::with_capacity(4);
-    if hw.has_gpu() {
-        modes.push(RunMode::Gpu);
-        if model.is_moe() {
-            modes.push(RunMode::Moe);
-        }
-        modes.push(RunMode::CpuGpu);
-    }
-    modes.push(RunMode::Cpu);
-
     let mut best: Option<(Placement, f64, Scores)> = None;
     let mut best_value = f64::NEG_INFINITY;
-    for mode in modes {
+    for mode in candidate_modes(model, hw) {
         for &context in &contexts {
             for quant in Quant::HIERARCHY {
-                let Some(placement) = try_place(model, mode, quant, context, vram, ram) else {
+                let Some(placement) =
+                    try_place(model, mode, quant, context, vram, ram, cfg.kv_quant)
+                else {
                     continue;
                 };
-                let tps = estimate_tps(model, hw, quant, mode, placement.gpu_fraction(), cfg);
+                // A measurement of this exact placement outranks the formula,
+                // and it takes part in choosing the placement too: a model
+                // benchmarked faster than predicted should be ranked that way.
+                let tps = hw
+                    .measured_tps(&model.id, quant.label(), mode.label())
+                    .unwrap_or_else(|| {
+                        estimate_tps(model, hw, quant, mode, placement.gpu_read_share, cfg)
+                    });
                 let value = placement_value(model, &placement, tps, target, benchmarks);
                 if value > best_value {
                     best_value = value;
@@ -457,11 +657,12 @@ fn place(
     // Nothing fits anywhere: report the cheapest configuration as Too Tight.
     let quant = Quant::Q2K;
     let context = *contexts.last().unwrap();
-    let required = model.total_memory_gb(quant, context);
-    let pool = if hw.has_gpu() { vram + ram } else { ram };
+    let required = model.total_memory_gb_with(quant, context, cfg.kv_quant);
+    let spills = hw.has_gpu() && !hw.unified_memory();
+    let pool = if spills { vram + ram } else { ram.max(vram) };
     let placement = Placement {
         quant,
-        mode: if hw.has_gpu() {
+        mode: if spills {
             RunMode::CpuGpu
         } else {
             RunMode::Cpu
@@ -475,17 +676,52 @@ fn place(
         } else {
             100.0
         },
+        gpu_read_share: if spills {
+            (vram / required).clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
     };
     let tps = estimate_tps(
         model,
         hw,
         quant,
         placement.mode,
-        placement.gpu_fraction(),
+        placement.gpu_read_share,
         cfg,
     );
     let scores = score(model, &placement, tps, target, benchmarks);
     (placement, tps, scores)
+}
+
+/// The placement a runtime would reach for a model already fixed at `quant`,
+/// and the throughput it would get there.
+///
+/// [`analyze`] is free to choose the quantization; a measurement is not. A
+/// benchmark reports what the runtime actually loaded — Ollama's default tag is
+/// Q4_K_M whatever llmspec would have picked — so comparing it against the
+/// analysis estimate at a different quantization mixes two questions: which
+/// quantization to run, and how fast a given one runs. This answers only the
+/// second, which is the one the speed model is responsible for.
+///
+/// Runtimes fill the card first and spill only what does not fit, so the run
+/// modes are tried in that order rather than scored. `None` means the model
+/// does not fit this machine at all at this quantization.
+pub fn estimate_at_quant(
+    model: &Model,
+    hw: &Hardware,
+    quant: Quant,
+    context: u32,
+    cfg: &SpeedConfig,
+) -> Option<(RunMode, f64)> {
+    let context = context.min(model.context_length).max(1);
+    let vram = hw.total_vram_gb();
+    let ram = hw.usable_ram_gb();
+    candidate_modes(model, hw).into_iter().find_map(|mode| {
+        let placement = try_place(model, mode, quant, context, vram, ram, cfg.kv_quant)?;
+        let tps = estimate_tps(model, hw, quant, mode, placement.gpu_read_share, cfg);
+        Some((mode, tps))
+    })
 }
 
 fn try_place(
@@ -495,12 +731,14 @@ fn try_place(
     context: u32,
     vram: f64,
     ram: f64,
+    kv: KvQuant,
 ) -> Option<Placement> {
-    let total = model.total_memory_gb(quant, context);
+    let total = model.total_memory_gb_with(quant, context, kv);
+    let usable_vram = vram * VRAM_COMFORTABLE;
 
     match mode {
         RunMode::Gpu => {
-            if total > vram * VRAM_COMFORTABLE {
+            if total > usable_vram {
                 return None;
             }
             let percent = total / vram * 100.0;
@@ -519,12 +757,14 @@ fn try_place(
                 required_gb: total,
                 resident_gb: total,
                 mem_percent: percent,
+                gpu_read_share: 1.0,
             })
         }
         RunMode::Moe => {
-            // Active experts stay in VRAM, the rest streams from system RAM.
-            let resident = model.moe_resident_gb(quant, context);
-            if resident > vram * VRAM_COMFORTABLE || total > vram + ram {
+            // Attention, the router and the KV cache stay in VRAM; the routed
+            // experts stream from system RAM.
+            let resident = model.moe_resident_gb_with(quant, context, kv);
+            if resident > usable_vram || total > vram + ram {
                 return None;
             }
             // MoE offloading tops out at Good: it is never as clean as pure GPU.
@@ -532,6 +772,16 @@ fn try_place(
                 FitLevel::Good
             } else {
                 FitLevel::Marginal
+            };
+            // Whatever VRAM the resident set leaves free holds some of the
+            // expert layers too, which is what `--n-cpu-moe` does: only the
+            // experts that did not fit are read across the slower bus.
+            let experts_gb = (model.weights_gb(quant) - model.active_weights_gb(quant)).max(0.0)
+                + model.active_weights_gb(quant) * MOE_ROUTED_SHARE;
+            let experts_on_gpu = if experts_gb > 0.0 {
+                ((usable_vram - resident) / experts_gb).clamp(0.0, 1.0)
+            } else {
+                1.0
             };
             Some(Placement {
                 quant,
@@ -541,15 +791,20 @@ fn try_place(
                 required_gb: total,
                 resident_gb: resident,
                 mem_percent: resident / vram * 100.0,
+                gpu_read_share: (1.0 - MOE_ROUTED_SHARE) + MOE_ROUTED_SHARE * experts_on_gpu,
             })
         }
         RunMode::CpuGpu => {
             if total > vram + ram {
                 return None;
             }
+            // A runtime offloads whole layers, each carrying its share of the
+            // weights and the KV cache, after reserving the fixed overhead.
+            let overhead = Model::overhead_gb(model.weights_gb(quant));
+            let layered = (total - overhead).max(0.01);
+            let on_gpu = ((usable_vram - overhead) / layered).clamp(0.0, 1.0);
             // Hybrid execution also tops out at Good.
-            let gpu_fraction = (vram / total).min(1.0);
-            let fit = if gpu_fraction >= 0.5 {
+            let fit = if on_gpu >= 0.5 {
                 FitLevel::Good
             } else {
                 FitLevel::Marginal
@@ -562,6 +817,7 @@ fn try_place(
                 required_gb: total,
                 resident_gb: vram.min(total),
                 mem_percent: total / (vram + ram) * 100.0,
+                gpu_read_share: on_gpu,
             })
         }
         RunMode::Cpu => {
@@ -577,6 +833,7 @@ fn try_place(
                 required_gb: total,
                 resident_gb: total,
                 mem_percent: total / ram * 100.0,
+                gpu_read_share: 0.0,
             })
         }
     }
@@ -586,10 +843,6 @@ fn try_place(
 // Speed
 // ---------------------------------------------------------------------------
 
-/// Estimated generation throughput in tokens per second.
-///
-/// `gpu_fraction` is the share of the footprint that stays on the accelerator;
-/// the remainder is read across the much slower system memory bus.
 /// Weight bytes (GB) that must be read to generate one token.
 ///
 /// This is the denominator of the whole throughput model, and the one term
@@ -608,37 +861,45 @@ fn bytes_read_per_token_gb(model: &Model, quant: Quant) -> f64 {
     .max(0.01)
 }
 
+/// Estimated generation throughput in tokens per second.
+///
+/// `gpu_read_share` is the part of each token's weight reads served from VRAM;
+/// the rest cross the system memory bus. The two are *added as time*, not
+/// averaged as speed: a token has to pass through every layer, so the slow
+/// half of a split sets the pace. Averaging the bandwidths instead — what an
+/// earlier version did — let a model 20% offloaded keep 80% of its GPU speed,
+/// where a sweep of layer splits shows it keeping about half.
+///
+/// A card missing from the bandwidth table is read at its backend's assumed
+/// bandwidth rather than dropped into a different formula, so every estimate
+/// follows the same physics and differs only in how well its inputs are known.
 pub fn estimate_tps(
     model: &Model,
     hw: &Hardware,
     quant: Quant,
     mode: RunMode,
-    gpu_fraction: f64,
+    gpu_read_share: f64,
     cfg: &SpeedConfig,
 ) -> f64 {
     let read_gb = bytes_read_per_token_gb(model, quant);
-
-    let resident = gpu_fraction.clamp(0.0, 1.0);
-    let base = match (mode, hw.primary_bandwidth()) {
-        // Known GPU: use its real memory bandwidth.
-        (RunMode::Gpu | RunMode::Moe, Some(bw)) => bw / read_gb * cfg.efficiency,
-        (RunMode::CpuGpu, Some(bw)) => {
-            let blended = resident * bw + (1.0 - resident) * hw.ram_bandwidth();
-            blended / read_gb * cfg.efficiency
-        }
-        (RunMode::Cpu, _) => hw.ram_bandwidth() / read_gb * cfg.efficiency,
-        // Unknown GPU: per-backend constant, scaled by how much of the model
-        // actually stays resident. System memory is roughly a fifth as fast as
-        // a discrete GPU's, so spilling weights costs most of the throughput.
-        (mode, None) => {
-            let raw = hw.backend.speed_constant() / model.active_params().max(0.1)
-                * quant.speed_multiplier();
-            match mode {
-                RunMode::CpuGpu => raw * (resident + (1.0 - resident) * CPU_BANDWIDTH_RATIO),
-                _ => raw,
-            }
-        }
+    let on_gpu = match mode {
+        RunMode::Cpu => 0.0,
+        RunMode::Gpu => 1.0,
+        RunMode::Moe | RunMode::CpuGpu => gpu_read_share.clamp(0.0, 1.0),
     };
+    let gpu_bandwidth = hw
+        .primary_bandwidth()
+        .unwrap_or_else(|| hw.backend.assumed_bandwidth_gb_s())
+        * cfg.efficiency.max(1e-6);
+    let ram_bandwidth = hw.ram_bandwidth() * cfg.cpu_efficiency.max(1e-6);
+
+    let mut seconds = PER_TOKEN_OVERHEAD_S;
+    if on_gpu > 0.0 {
+        seconds += read_gb * on_gpu / gpu_bandwidth;
+    }
+    if on_gpu < 1.0 {
+        seconds += read_gb * (1.0 - on_gpu) / ram_bandwidth;
+    }
 
     let mode_factor = match mode {
         RunMode::Gpu => {
@@ -653,7 +914,7 @@ pub fn estimate_tps(
         RunMode::Cpu => cfg.cpu_only_factor,
     };
 
-    (base * mode_factor).max(0.0)
+    (mode_factor / seconds).max(0.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -923,6 +1184,7 @@ mod tests {
             backend: Backend::CpuX86,
             ram_bandwidth_gb_s: None,
             simulated: true,
+            measured: Vec::new(),
         };
         if vram > 0.0 {
             h.set_vram(vram);
@@ -1036,16 +1298,123 @@ mod tests {
     fn moe_offloading_beats_giving_up() {
         let db = ModelDb::embedded();
         let m = db.find("Qwen/Qwen3-30B-A3B").unwrap();
-        // 30B total does not fit 12 GB of VRAM, but 3.3B active does.
-        let r = analyze(
-            m,
-            &hw(12.0, 64.0),
-            UseCase::Reasoning,
-            &SpeedConfig::default(),
-        );
+        // 30B total does not fit 12 GB of VRAM, but 3.3B active does. The
+        // context is pinned: without a cap the search may rightly trade expert
+        // offload for a 128K window in a plain CPU+GPU split, which is a
+        // different question from whether offloading experts beats spilling
+        // whole layers at the same context.
+        let cfg = SpeedConfig {
+            context_cap: Some(32_768),
+            ..SpeedConfig::default()
+        };
+        let machine = hw(12.0, 64.0);
+        let r = analyze(m, &machine, UseCase::Reasoning, &cfg);
         assert_eq!(r.mode, RunMode::Moe);
         assert!(r.resident_gb < r.required_gb);
         assert!(r.is_runnable());
+
+        let spill = try_place(
+            m,
+            RunMode::CpuGpu,
+            r.quant,
+            r.context,
+            12.0,
+            machine.usable_ram_gb(),
+            KvQuant::F16,
+        )
+        .unwrap();
+        let spill_tps = estimate_tps(
+            m,
+            &machine,
+            r.quant,
+            RunMode::CpuGpu,
+            spill.gpu_read_share,
+            &cfg,
+        );
+        assert!(
+            r.tokens_per_second > spill_tps,
+            "experts offloaded {:.1} tok/s should beat whole layers spilled {spill_tps:.1}",
+            r.tokens_per_second
+        );
+    }
+
+    #[test]
+    fn a_split_is_paced_by_its_slow_half() {
+        // Time per token adds across the two pools, so a model mostly on the
+        // GPU still runs far below GPU speed. Averaging the bandwidths instead
+        // kept 80% of the GPU speed for a model 20% offloaded.
+        let db = ModelDb::embedded();
+        let m = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
+        let cfg = SpeedConfig::default();
+        let machine = hw(24.0, 64.0);
+        let full = estimate_tps(m, &machine, Quant::Q4KM, RunMode::Gpu, 1.0, &cfg);
+        let split = estimate_tps(m, &machine, Quant::Q4KM, RunMode::CpuGpu, 0.8, &cfg);
+        let cpu = estimate_tps(m, &machine, Quant::Q4KM, RunMode::Cpu, 0.0, &cfg);
+        assert!(
+            split < full * 0.6,
+            "80% on GPU kept {split:.1} of {full:.1}"
+        );
+        assert!(split > cpu, "any GPU share must beat none");
+    }
+
+    #[test]
+    fn unified_memory_never_spills_into_itself() {
+        // On Apple Silicon the GPU's memory is system RAM, so a CPU+GPU split
+        // would count the same bytes twice.
+        let db = ModelDb::embedded();
+        let m = db.find("meta-llama/Llama-3.3-70B-Instruct").unwrap();
+        let mut mac = hw(0.0, 36.0);
+        mac.simulate_gpu("Apple M3 Pro", 1).unwrap();
+        assert!(mac.unified_memory());
+        let r = analyze(m, &mac, UseCase::General, &SpeedConfig::default());
+        assert_ne!(r.mode, RunMode::CpuGpu);
+        assert_ne!(r.mode, RunMode::Moe);
+    }
+
+    #[test]
+    fn tiny_models_are_bounded_by_the_per_token_overhead() {
+        // A 135M model reads almost nothing per token, and the bandwidth ratio
+        // alone would promise thousands of tokens a second.
+        let db = ModelDb::embedded();
+        let tiny = db
+            .models
+            .iter()
+            .min_by(|a, b| a.params_b.total_cmp(&b.params_b))
+            .unwrap();
+        let mut rig = hw(0.0, 64.0);
+        rig.simulate_gpu("RTX 5090", 1).unwrap();
+        let tps = estimate_tps(
+            tiny,
+            &rig,
+            Quant::Q4KM,
+            RunMode::Gpu,
+            1.0,
+            &SpeedConfig::default(),
+        );
+        assert!(tps < 1.0 / PER_TOKEN_OVERHEAD_S, "{tps:.0} tok/s");
+    }
+
+    #[test]
+    fn a_quantized_kv_cache_fits_more_context() {
+        let db = ModelDb::embedded();
+        let m = db.find("Qwen/Qwen3-4B-Instruct-2507").unwrap();
+        let machine = hw(8.0, 32.0);
+        let fp16 = analyze(m, &machine, UseCase::General, &SpeedConfig::default());
+        let q4 = analyze(
+            m,
+            &machine,
+            UseCase::General,
+            &SpeedConfig {
+                kv_quant: KvQuant::Q4_0,
+                ..SpeedConfig::default()
+            },
+        );
+        assert!(
+            q4.context > fp16.context,
+            "q4_0 cache placed {} against {} at f16",
+            q4.context,
+            fp16.context
+        );
     }
 
     #[test]
@@ -1133,10 +1502,12 @@ mod tests {
         let slow_tps = estimate_tps(model, &slow, Quant::Q4KM, RunMode::Cpu, 0.0, &cfg);
         let fast_tps = estimate_tps(model, &fast, Quant::Q4KM, RunMode::Cpu, 0.0, &cfg);
 
-        // CPU generation is bandwidth-bound, so doubling the bandwidth doubles
-        // the estimate. Anything else means the figure is not reaching it.
+        // CPU generation is bandwidth-bound, so doubling the bandwidth halves
+        // the time spent reading weights; only the fixed per-token overhead is
+        // left unchanged. Anything else means the figure is not reaching it.
+        let read = |tps: f64| 1.0 / tps - PER_TOKEN_OVERHEAD_S;
         assert!(
-            (fast_tps / slow_tps - 2.0).abs() < 1e-9,
+            (read(slow_tps) / read(fast_tps) - 2.0).abs() < 1e-9,
             "{slow_tps} -> {fast_tps}"
         );
     }
@@ -1273,7 +1644,7 @@ pub fn plan(
     target_tps: Option<f64>,
 ) -> HardwarePlan {
     let weights_size = model.weights_gb(quant);
-    let kv_cache_size = model.kv_cache_gb(context);
+    let kv_cache_size = model.kv_cache_gb_with(context, cfg.kv_quant);
     let total_gpu = weights_size + kv_cache_size;
     let min_vram = total_gpu.ceil();
     let recommended_vram = (total_gpu * RECOMMENDED_HEADROOM).ceil();

@@ -7,6 +7,7 @@
 
 use serde::Serialize;
 
+use crate::config::{Calibration, Config};
 use crate::hardware::{Backend, Hardware};
 use crate::models::ModelDb;
 use crate::providers::{ProviderRegistry, RuntimeKind};
@@ -153,6 +154,8 @@ pub fn run(hw: &Hardware, db: &ModelDb, registry: &mut ProviderRegistry) -> Repo
         ),
     ));
 
+    checks.push(calibration_check(hw));
+
     if hw.simulated {
         checks.push(Check::info(
             "Overrides",
@@ -203,7 +206,11 @@ fn gpu_checks(hw: &Hardware) -> Vec<Check> {
             checks.push(Check::warn(
                 name,
                 detail,
-                "this GPU is not in the bandwidth table; speed falls back to a per-backend constant",
+                format!(
+                    "this GPU is not in the bandwidth table; speed assumes {:.0} GB/s, the low end of {} cards — try --gpu with the nearest known model",
+                    hw.backend.assumed_bandwidth_gb_s(),
+                    hw.backend.label()
+                ),
             ));
         } else {
             checks.push(Check::ok(name, detail));
@@ -251,10 +258,132 @@ fn runtime_check(registry: &mut ProviderRegistry) -> Check {
     Check::ok("Runtimes", summary)
 }
 
+/// Whether the throughput estimates are fitted to this machine or shipped.
+///
+/// Worth stating either way. An uncalibrated estimate is a bandwidth model
+/// with a conservative constant in it; a calibrated one carries a number
+/// someone measured, and a stale or foreign one is the case that would
+/// otherwise mislead silently.
+fn calibration_check(hw: &Hardware) -> Check {
+    describe_calibration(hw, Config::load().calibration.as_ref())
+}
+
+/// The decision itself, separated from reading the file so it can be tested
+/// without one.
+fn describe_calibration(hw: &Hardware, calibration: Option<&Calibration>) -> Check {
+    let Some(calibration) = calibration else {
+        return Check::info(
+            "Speed model",
+            "estimates use the shipped efficiency factor — run `llmspec bench              --calibrate` to fit it to this machine",
+        );
+    };
+
+    let gpu = hw.primary_gpu_name();
+    if !calibration.matches(&gpu, hw.backend.label()) {
+        return Check::warn(
+            "Speed model",
+            format!(
+                "the stored calibration was measured on {} / {}, not this machine",
+                calibration.gpu, calibration.backend
+            ),
+            "it is being ignored; run `llmspec bench --calibrate` here to replace it",
+        );
+    }
+
+    let age = calibration.age_days();
+    let when = match age {
+        0 => "today".to_string(),
+        1 => "yesterday".to_string(),
+        n => format!("{n} days ago"),
+    };
+    let detail = format!(
+        "efficiency {:.2}, fitted to {} measurement{} taken {when}",
+        calibration.efficiency,
+        calibration.samples,
+        if calibration.samples == 1 { "" } else { "s" }
+    );
+    // A driver update or a new runtime version moves throughput, so an old
+    // fit is a claim about a machine that may no longer exist.
+    if age > 180 {
+        Check::warn(
+            "Speed model",
+            detail,
+            "that is over six months old — re-run `llmspec bench --calibrate`",
+        )
+    } else {
+        Check::ok("Speed model", detail)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::now_unix;
     use crate::hardware::{Backend, Gpu, Vendor};
+
+    /// A calibration recorded on `hw`, `age` days ago.
+    fn calibration_for(hw: &Hardware, age_days: u64) -> Calibration {
+        Calibration {
+            efficiency: 0.62,
+            samples: 4,
+            measured_at: now_unix().saturating_sub(age_days * 86_400),
+            gpu: hw.primary_gpu_name(),
+            backend: hw.backend.label().to_string(),
+        }
+    }
+
+    #[test]
+    fn an_uncalibrated_machine_is_told_how_to_calibrate() {
+        let check = describe_calibration(&base_hw(), None);
+        assert_eq!(check.severity, Severity::Info);
+        assert!(check.detail.contains("--calibrate"), "{}", check.detail);
+    }
+
+    #[test]
+    fn a_calibration_from_this_machine_is_reported_with_its_provenance() {
+        let hw = base_hw();
+        let check = describe_calibration(&hw, Some(&calibration_for(&hw, 0)));
+        assert_eq!(check.severity, Severity::Ok);
+        assert!(check.detail.contains("0.62"), "{}", check.detail);
+        assert!(check.detail.contains("4 measurements"), "{}", check.detail);
+        assert!(check.detail.contains("today"), "{}", check.detail);
+    }
+
+    #[test]
+    fn a_calibration_from_another_machine_is_flagged_rather_than_used() {
+        // The failure this guards against is silent: a config copied to a new
+        // machine would otherwise scale every estimate by a number fitted to
+        // hardware that is no longer there.
+        let hw = base_hw();
+        let mut foreign = calibration_for(&hw, 1);
+        foreign.gpu = "Some Other GPU".to_string();
+        let check = describe_calibration(&hw, Some(&foreign));
+        assert_eq!(check.severity, Severity::Warn);
+        assert!(check.detail.contains("Some Other GPU"), "{}", check.detail);
+        assert!(check.hint.unwrap().contains("ignored"));
+    }
+
+    #[test]
+    fn a_stale_calibration_is_a_warning_with_its_age() {
+        let hw = base_hw();
+        let check = describe_calibration(&hw, Some(&calibration_for(&hw, 400)));
+        assert_eq!(check.severity, Severity::Warn);
+        assert!(check.detail.contains("400 days ago"), "{}", check.detail);
+    }
+
+    #[test]
+    fn one_measurement_is_not_described_as_measurements() {
+        let hw = base_hw();
+        let mut single = calibration_for(&hw, 1);
+        single.samples = 1;
+        let check = describe_calibration(&hw, Some(&single));
+        assert!(
+            check.detail.contains("1 measurement taken"),
+            "{}",
+            check.detail
+        );
+        assert!(check.detail.contains("yesterday"), "{}", check.detail);
+    }
 
     fn base_hw() -> Hardware {
         Hardware {
@@ -268,6 +397,7 @@ mod tests {
             backend: Backend::CpuX86,
             ram_bandwidth_gb_s: None,
             simulated: false,
+            measured: Vec::new(),
         }
     }
 
