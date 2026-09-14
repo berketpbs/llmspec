@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use crate::display;
 use crate::fit::{self, FitLevel, FitResult, SpeedConfig};
 use crate::hardware::Hardware;
-use crate::models::{ModelDb, Quant, UseCase};
+use crate::models::{Lookup, ModelDb, Quant, UseCase};
 use crate::providers::ProviderRegistry;
 use crate::verify;
 
@@ -573,11 +573,23 @@ impl Mcp {
     fn tool_model(&self, args: &Value) -> Result<Value, String> {
         let name = require_str(args, "name")?;
         let target = self.use_case(args)?;
-        let model = self
-            .db
-            .find(name)
-            .ok_or_else(|| format!("no model matches '{name}'. Try the search tool first."))?;
+        let model = self.lookup(name)?;
         to_value(&fit::analyze(model, &self.hw, target, &self.cfg))
+    }
+
+    /// One model by the name the assistant passed.
+    ///
+    /// An ambiguous name is an error listing the candidates rather than the
+    /// first match: an assistant handed the wrong model's numbers would relay
+    /// them with full confidence, while a list of ids is something it can
+    /// retry from.
+    fn lookup(&self, name: &str) -> Result<&crate::models::Model, String> {
+        match self.db.resolve(name) {
+            Lookup::NotFound => Err(format!(
+                "no model matches '{name}'. Try the search tool first."
+            )),
+            found => found.into_result(name),
+        }
     }
 
     fn tool_search(&self, args: &Value) -> Result<Value, String> {
@@ -595,10 +607,7 @@ impl Mcp {
 
     fn tool_plan(&self, args: &Value) -> Result<Value, String> {
         let name = require_str(args, "model")?;
-        let model = self
-            .db
-            .find(name)
-            .ok_or_else(|| format!("no model matches '{name}'. Try the search tool first."))?;
+        let model = self.lookup(name)?;
         let quant = match arg_str(args, "quant") {
             Some(raw) => Quant::parse(raw).ok_or_else(|| {
                 format!(
@@ -928,6 +937,24 @@ mod tests {
             text.contains("general"),
             "the message should list the choices"
         );
+    }
+
+    #[test]
+    fn an_ambiguous_model_name_lists_candidates_instead_of_guessing() {
+        let mut s = server();
+        let response = call(&mut s, "model", json!({ "name": "llama" }));
+        assert_eq!(response["result"]["isError"], true);
+        let text = response["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("matches"), "{text}");
+        assert!(text.contains("meta-llama/"), "{text}");
+
+        // An exact id still answers.
+        let response = call(
+            &mut s,
+            "plan",
+            json!({ "model": "meta-llama/Llama-3.1-8B-Instruct" }),
+        );
+        assert!(response["result"]["isError"] != true, "{response}");
     }
 
     #[test]
