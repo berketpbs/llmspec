@@ -109,6 +109,11 @@ image would each need release automation and signing.
    runtime tags, partial geometry and implausible values
 4. Rebuild; the catalog is embedded at compile time
 
+Correcting or removing a record works the same way: edit or delete its entry in
+the script and run it. Never edit `data/models.json` by hand. The script
+rewrites every record from its own entries, and `--check` (run by CI and the
+pre-commit hook) fails while the two disagree.
+
 Geometry (`layers`, `hidden_size`, `kv_heads`, `head_dim`) is optional but
 worth having: with it the KV cache is exact, without it llmspec falls back to
 a heuristic derived from one model's proportions. Supply all four fields or

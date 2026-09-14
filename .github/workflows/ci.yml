@@ -51,6 +51,21 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+  catalog:
+    name: Catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # data/models.json is generated from scripts/add_models.py; a hand edit
+      # to the JSON would be lost on the script's next run.
+      - name: Check the catalog matches its generator
+        run: python scripts/add_models.py --check
+
   fmt:
     name: Format check
     runs-on: ubuntu-latest
