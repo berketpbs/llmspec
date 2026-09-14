@@ -31,6 +31,9 @@ const GENERATE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Pulls take as long as they take; the cap only stops a wedged connection.
 const PULL_TIMEOUT: Duration = Duration::from_secs(3600);
 
+/// Context a benchmark run asks the runtime for, and that its estimate is made at.
+pub const BENCH_CONTEXT: u32 = 4_096;
+
 fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
@@ -240,6 +243,13 @@ pub struct InstalledModel {
     /// `deepseek-r1:latest` is an alias, `8.2B` is a fact — and that is what
     /// lets a moving tag be resolved to a catalog entry.
     pub params_b: Option<f64>,
+    /// The quantization the runtime holds the weights at, when it says.
+    ///
+    /// A benchmark measures these bytes, not whatever llmspec would have
+    /// chosen, so this is what the measurement has to be compared against.
+    /// Ollama reports it in the tag details; llama.cpp and LM Studio only
+    /// through the file name, when the name carries one.
+    pub quantization: Option<String>,
 }
 
 impl InstalledModel {
@@ -465,6 +475,7 @@ impl Runtime {
                     stream: false,
                     options: OllamaOptions {
                         num_predict: max_tokens,
+                        num_ctx: BENCH_CONTEXT,
                     },
                 };
                 http.post(&url)
@@ -541,6 +552,10 @@ struct PullRequest<'a> {
 #[derive(Serialize)]
 struct OllamaOptions {
     num_predict: u32,
+    /// Pinned rather than left to the server's default, which has changed
+    /// between Ollama releases: the estimate a benchmark is compared against
+    /// is made at a known context, and the run should be too.
+    num_ctx: u32,
 }
 
 #[derive(Serialize)]
@@ -587,6 +602,9 @@ struct TagDetails {
     /// Ollama writes this as a human string: "8.2B", "1.5B", "70.6B".
     #[serde(default)]
     parameter_size: Option<String>,
+    /// "Q4_K_M", "Q8_0", "F16".
+    #[serde(default)]
+    quantization_level: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -642,18 +660,44 @@ fn parse_ollama_tags(text: &str) -> Result<Vec<InstalledModel>, String> {
     Ok(parsed
         .models
         .into_iter()
-        .map(|t| InstalledModel {
-            name: t.name,
-            provider: "ollama".to_string(),
-            size_bytes: t.size,
-            modified_at: t.modified_at,
-            params_b: t
-                .details
-                .and_then(|d| d.parameter_size)
-                .as_deref()
-                .and_then(parse_parameter_size),
+        .map(|t| {
+            let (parameter_size, quantization) = match t.details {
+                Some(d) => (d.parameter_size, d.quantization_level),
+                None => (None, None),
+            };
+            InstalledModel {
+                params_b: parameter_size.as_deref().and_then(parse_parameter_size),
+                quantization: quantization.or_else(|| quantization_in_name(&t.name)),
+                name: t.name,
+                provider: "ollama".to_string(),
+                size_bytes: t.size,
+                modified_at: t.modified_at,
+            }
         })
         .collect())
+}
+
+/// The GGUF quantization marker in a model or file name, if it carries one.
+///
+/// `Qwen2.5-7B-Instruct-Q4_K_M.gguf` says what it holds; `qwen2.5-7b-instruct`
+/// does not, and is left unknown rather than assumed.
+pub fn quantization_in_name(name: &str) -> Option<String> {
+    let upper = name.to_ascii_uppercase().replace('-', "_");
+    const MARKERS: &[&str] = &[
+        "Q4_K_M", "Q4_K_S", "Q5_K_M", "Q5_K_S", "Q3_K_M", "Q3_K_S", "Q3_K_L", "Q6_K", "Q8_0",
+        "Q2_K", "Q4_0", "Q4_1", "Q5_0", "IQ4_XS", "IQ4_NL", "BF16", "F16", "F32",
+    ];
+    MARKERS
+        .iter()
+        .find(|marker| {
+            upper.match_indices(*marker).any(|(at, _)| {
+                let before = upper[..at].chars().next_back();
+                let after = upper[at + marker.len()..].chars().next();
+                !before.is_some_and(|c| c.is_ascii_alphanumeric())
+                    && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+            })
+        })
+        .map(|marker| (*marker).to_string())
 }
 
 /// Parse Ollama's `parameter_size` string into billions of parameters.
@@ -681,13 +725,14 @@ fn parse_openai_models(text: &str, provider: &str) -> Result<Vec<InstalledModel>
         .data
         .into_iter()
         .map(|m| InstalledModel {
-            name: m.id,
             provider: provider.to_string(),
             // The OpenAI model listing carries neither a size nor a parameter
             // count, so a tag is all there is to match on for these runtimes.
             size_bytes: 0,
             modified_at: m.created.map(|c| c.to_string()).unwrap_or_default(),
             params_b: None,
+            quantization: quantization_in_name(&m.id),
+            name: m.id,
         })
         .collect())
 }
@@ -1027,6 +1072,7 @@ mod tests {
                 size_bytes: 0,
                 modified_at: String::new(),
                 params_b: None,
+                quantization: None,
             },
             InstalledModel {
                 name: "phi-4-mini-instruct".into(),
@@ -1034,6 +1080,7 @@ mod tests {
                 size_bytes: 0,
                 modified_at: String::new(),
                 params_b: None,
+                quantization: None,
             },
         ]);
 
@@ -1092,6 +1139,7 @@ mod tests {
             size_bytes: 1024 * 1024 * 1024,
             modified_at: String::new(),
             params_b: None,
+            quantization: None,
         };
         assert!((model.size_gb() - 1.0).abs() < 0.01);
     }

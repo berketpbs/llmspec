@@ -803,6 +803,7 @@ pub(crate) mod tests {
             backend: Backend::CpuX86,
             ram_bandwidth_gb_s: None,
             simulated: true,
+            measured: Vec::new(),
         };
         if vram > 0.0 {
             hw.set_vram(vram);

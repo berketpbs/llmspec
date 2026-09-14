@@ -5,10 +5,11 @@ use serde::Serialize;
 
 use crate::bench::BenchReport;
 use crate::doctor::{Report, Severity};
-use crate::fit::{FitLevel, FitResult, HardwarePlan, RunMode, TargetPlan};
-use crate::hardware::Hardware;
-use crate::models::Model;
+use crate::fit::{FitLevel, FitResult, HardwarePlan, RunMode, SpeedSource, TargetPlan};
+use crate::hardware::{Hardware, KnownGpu};
+use crate::models::{KvQuant, Model};
 use crate::providers::{DiscoveredRuntime, RuntimeKind};
+use crate::verify::{Level, Report as VerifyReport, human};
 
 const COL_RANK: usize = 3;
 const COL_NAME: usize = 30;
@@ -218,12 +219,63 @@ pub fn render_table(results: &[FitResult]) -> String {
             rpad(&format_size_gb(r.download_gb), COL_SIZE),
             rpad(&format!("{:.0}%", r.mem_percent), COL_MEM),
             context,
-            rpad(&format_tps(r.tokens_per_second), COL_TPS),
+            tps_cell(r),
             rpad(&format!("{:.1}", r.scores.composite), COL_SCORE).bold(),
             pad(r.use_case.as_str(), COL_USE).bright_black(),
         ));
     }
     out
+}
+
+/// The bandwidth table, for choosing a name to pass to `--gpu`.
+pub fn render_gpus(cards: &[KnownGpu]) -> String {
+    let mut out = format!(
+        "{}
+",
+        format!(
+            "{:<24} {:<7} {:>8} {:>10}",
+            "GPU", "Vendor", "VRAM", "Bandwidth"
+        )
+        .bold()
+    );
+    for card in cards {
+        out.push_str(&format!(
+            "{:<24} {:<7} {:>8} {:>10}{}
+",
+            card.name,
+            card.vendor.label(),
+            format_size_gb(card.vram_gb),
+            format!("{:.0} GB/s", card.bandwidth_gb_s),
+            if card.unified_memory {
+                "  unified memory".bright_black().to_string()
+            } else {
+                String::new()
+            }
+        ));
+    }
+    out.push_str(&format!(
+        "
+{}
+",
+        format!(
+            "{} cards. Simulate one with --gpu \"{}\"; VRAM is the common configuration, override it with --memory.",
+            cards.len(),
+            cards.first().map_or("RTX 4090", |c| c.name)
+        )
+        .bright_black()
+    ));
+    out
+}
+
+/// The throughput cell: a measured figure is marked and coloured, so it cannot
+/// be mistaken for the estimates around it.
+fn tps_cell(r: &FitResult) -> colored::ColoredString {
+    match r.estimate.source {
+        SpeedSource::Measured => {
+            rpad(&format!("{}✓", format_tps(r.tokens_per_second)), COL_TPS).green()
+        }
+        _ => rpad(&format_tps(r.tokens_per_second), COL_TPS).normal(),
+    }
 }
 
 /// Plain database listing, without any hardware analysis.
@@ -334,14 +386,25 @@ pub fn render_detail(result: &FitResult, model: &Model, runtime: Option<RuntimeK
     } else {
         out.push_str(&row("Context", &format!("{context} (full)")));
     }
+    if result.max_context_fit > result.context {
+        out.push_str(&format!(
+            "  {:<14} {}\n",
+            "",
+            format!(
+                "up to {} would fit at this quantization, at a cost the ranking judged not worth it",
+                format_context(result.max_context_fit)
+            )
+            .bright_black()
+        ));
+    }
+    if result.estimate.kv_quant != KvQuant::F16 {
+        out.push_str(&row(
+            "KV cache",
+            &format!("{} (as set with --kv-quant)", result.estimate.kv_quant),
+        ));
+    }
 
-    out.push_str(&row(
-        "Throughput",
-        &format!(
-            "~{} tok/s estimated — check with `llmspec bench`",
-            format_tps(result.tokens_per_second)
-        ),
-    ));
+    out.push_str(&render_throughput(result));
 
     if let Some(kind) = runtime {
         out.push_str(&format!("\n{}\n", "How to run it".bold()));
@@ -381,6 +444,77 @@ pub fn render_detail(result: &FitResult, model: &Model, runtime: Option<RuntimeK
         "Composite",
         format!("{:.1}", result.scores.composite).bold()
     ));
+    out
+}
+
+/// The throughput figure, and what it rests on.
+///
+/// A number with no provenance invites exactly one of two mistakes: trusting a
+/// guess, or dismissing a measurement. So the source is always named, and an
+/// estimate carries the inputs someone would need to check it.
+fn render_throughput(result: &FitResult) -> String {
+    let basis = &result.estimate;
+    let tps = format_tps(result.tokens_per_second);
+    let mut out = match basis.source {
+        SpeedSource::Measured => row_colored(
+            "Throughput",
+            &format!(
+                "{tps} tok/s measured on this machine (the formula predicts {})",
+                format_tps(basis.formula_tps)
+            ),
+            Color::Green,
+        ),
+        SpeedSource::Calibrated => row(
+            "Throughput",
+            &format!("~{tps} tok/s, calibrated to this machine by `llmspec bench`"),
+        ),
+        SpeedSource::Estimated => row(
+            "Throughput",
+            &format!("~{tps} tok/s estimated — check with `llmspec bench`"),
+        ),
+        SpeedSource::Assumed => row_colored(
+            "Throughput",
+            &format!("~{tps} tok/s, from an assumed input — see `llmspec doctor`"),
+            Color::Yellow,
+        ),
+    };
+
+    let mut inputs = Vec::new();
+    if let Some(bw) = basis.gpu_bandwidth_gb_s {
+        inputs.push(format!(
+            "{:.0}% of {} read from VRAM at {bw:.0} GB/s{}",
+            basis.gpu_read_share * 100.0,
+            format_size_gb(basis.read_gb),
+            if basis.gpu_bandwidth_known {
+                ""
+            } else {
+                " (assumed)"
+            }
+        ));
+    }
+    if basis.gpu_read_share < 1.0 {
+        inputs.push(format!(
+            "{} from RAM at {:.0} GB/s{}",
+            if basis.gpu_bandwidth_gb_s.is_some() {
+                "the rest".to_string()
+            } else {
+                format!("{} read", format_size_gb(basis.read_gb))
+            },
+            basis.ram_bandwidth_gb_s,
+            if basis.ram_bandwidth_measured {
+                ""
+            } else {
+                " (assumed)"
+            }
+        ));
+    }
+    if !inputs.is_empty() {
+        out.push_str(&format!(
+            "  {:<14} {}\n",
+            "",
+            inputs.join("; ").bright_black()
+        ));
+    }
     out
 }
 
@@ -559,6 +693,71 @@ pub fn render_doctor(report: &Report) -> String {
         n => format!("  {n} items need attention.\n")
             .yellow()
             .to_string(),
+    });
+    out
+}
+
+pub fn render_verify(report: &VerifyReport) -> String {
+    let mut out = format!("{}\n", report.path.bold().underline());
+    out.push_str(&format!(
+        "  {}\n\n",
+        format!("{}, {}", report.format.label(), human(report.file_size)).bright_black()
+    ));
+
+    out.push_str(&format!("{}\n", "Contents".bold()));
+    if let Some(version) = report.version {
+        out.push_str(&row("Version", &version.to_string()));
+    }
+    if let Some(arch) = &report.architecture {
+        out.push_str(&row("Architecture", arch));
+    }
+    if let Some(name) = &report.name {
+        out.push_str(&row("Name", name));
+    }
+    out.push_str(&row("Tensors", &report.tensor_count.to_string()));
+    if report.parameters > 0 {
+        out.push_str(&row(
+            "Parameters",
+            &format_params(report.parameters as f64 / 1e9, None),
+        ));
+    }
+    if !report.tensor_types.is_empty() {
+        let types = report
+            .tensor_types
+            .iter()
+            .map(|t| format!("{} ({})", t.name, t.tensors))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&row("Types", &types));
+    }
+    if let Some(context) = report.context_length {
+        out.push_str(&row("Context", &format_context(context as u32)));
+    }
+    if report.data_bytes > 0 {
+        out.push_str(&row("Tensor data", &human(report.data_bytes)));
+    }
+
+    if !report.findings.is_empty() {
+        out.push_str(&format!("\n{}\n", "Findings".bold()));
+        for finding in &report.findings {
+            let color = match finding.level {
+                Level::Error => Color::Red,
+                Level::Warning => Color::Yellow,
+                Level::Note => Color::Cyan,
+            };
+            out.push_str(&format!(
+                "  {} {}\n",
+                pad(finding.level.label(), 8).color(color),
+                finding.message
+            ));
+        }
+    }
+
+    out.push('\n');
+    out.push_str(&if report.is_intact() {
+        "  The file is structurally intact.\n".green().to_string()
+    } else {
+        "  The file is damaged or incomplete.\n".red().to_string()
     });
     out
 }

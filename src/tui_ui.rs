@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Row, Table, TableState, Wrap};
 
 use crate::display::{format_context, format_params, format_size_gb, format_tps};
-use crate::fit::{FitLevel, FitResult, RunMode};
+use crate::fit::{FitLevel, FitResult, RunMode, SpeedSource};
 use crate::tui_app::{App, Mode};
 use crate::tui_form::Form;
 use crate::tui_theme::Palette;
@@ -351,10 +351,12 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App, palette: &Palette) {
         Line::from(vec![label("Context", palette), context]),
         Line::from(vec![
             label("Throughput", palette),
-            Span::raw(format!(
-                "~{} tok/s estimated",
-                format_tps(r.tokens_per_second)
-            )),
+            Span::raw(if r.estimate.source == SpeedSource::Measured {
+                format!("{} tok/s", format_tps(r.tokens_per_second))
+            } else {
+                format!("~{} tok/s", format_tps(r.tokens_per_second))
+            }),
+            Span::styled(format!(" {}", r.estimate.source.label()), dim(palette)),
             Span::styled("   verify with ", dim(palette)),
             Span::styled("llmspec bench", Style::new().fg(palette.accent)),
         ]),

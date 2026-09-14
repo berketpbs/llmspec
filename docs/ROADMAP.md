@@ -39,6 +39,8 @@ only about scope.
 - Interactive TUI with twenty-one themes, comparison, planning and simulation
 - Classic CLI for every command, with JSON everywhere
 - Read-only HTTP API
+- MCP server over stdio, dual-era
+- `verify` for GGUF and safetensors integrity
 - `doctor` diagnostics, exiting non-zero on warnings
 - `bench` measurement, with estimate comparison and efficiency calibration
 

@@ -6,18 +6,23 @@ use std::fmt;
 /// The model database is embedded at build time.
 const EMBEDDED_DB: &str = include_str!("../data/models.json");
 
-/// Bytes per element of a fp16 KV cache entry.
-const KV_ELEMENT_BYTES: f64 = 2.0;
-
-/// Fallback KV-cache cost in GB per (token x billion params), derived from
-/// Llama-3.1-8B geometry. Only used when a model has no geometry fields.
+/// Fallback KV-cache cost in GB per (token x billion params) for an fp16
+/// cache, derived from Llama-3.1-8B geometry. Only used when a model has no
+/// geometry fields.
 const KV_FALLBACK_GB_PER_TOKEN_PER_B: f64 = 1.63e-5;
 
-/// Fixed runtime overhead (CUDA context, compute buffers, allocator slack).
-const BASE_OVERHEAD_GB: f64 = 0.40;
+/// Fixed runtime overhead: the accelerator context and compute buffers.
+const BASE_OVERHEAD_GB: f64 = 0.30;
 
 /// Additional overhead proportional to the resident weights.
-const OVERHEAD_WEIGHT_FRACTION: f64 = 0.05;
+///
+/// Measured rather than assumed. Ollama holding Qwen2.5-1.5B at 4K context
+/// takes 1.19 GiB of VRAM against 0.98 GiB of weights and cache, and
+/// Qwen2.5-7B takes 4.52 GiB against 4.49 GiB, so what the runtime adds is
+/// close to a constant. The 5% this used to charge grew to 1.3 GB on a 32B
+/// model and pushed placements that run entirely on a 20 GB card into CPU
+/// offload.
+const OVERHEAD_WEIGHT_FRACTION: f64 = 0.01;
 
 const BYTES_PER_GB: f64 = 1024.0 * 1024.0 * 1024.0;
 
@@ -162,18 +167,6 @@ impl Quant {
         }
     }
 
-    /// Throughput multiplier used by the fallback (non-bandwidth) speed model.
-    pub fn speed_multiplier(self) -> f64 {
-        match self {
-            Quant::Q8_0 => 0.75,
-            Quant::Q6K => 0.85,
-            Quant::Q5KM => 0.92,
-            Quant::Q4KM => 1.00,
-            Quant::Q3KM => 1.08,
-            Quant::Q2K => 1.15,
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Quant::Q8_0 => "Q8_0",
@@ -209,6 +202,75 @@ impl Quant {
 }
 
 impl fmt::Display for Quant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// KV-cache quantization
+// ---------------------------------------------------------------------------
+
+/// How the runtime stores the KV cache.
+///
+/// On long-context models the cache, not the weights, is what runs out of
+/// memory first, and every current runtime can store it quantized: llama.cpp
+/// with `--cache-type-k/-v`, Ollama with `OLLAMA_KV_CACHE_TYPE`. Q8_0 halves the
+/// cost of context at no measurable quality loss, which moves placements more
+/// than any other single setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KvQuant {
+    #[default]
+    #[serde(rename = "f16")]
+    F16,
+    #[serde(rename = "q8_0")]
+    Q8_0,
+    #[serde(rename = "q4_0")]
+    Q4_0,
+}
+
+impl KvQuant {
+    pub const ALL: [KvQuant; 3] = [KvQuant::F16, KvQuant::Q8_0, KvQuant::Q4_0];
+
+    /// Bytes per cached element, including the per-block scale of the
+    /// quantized formats (34 bytes per 32 values for Q8_0, 18 for Q4_0).
+    pub fn bytes_per_element(self) -> f64 {
+        match self {
+            KvQuant::F16 => 2.0,
+            KvQuant::Q8_0 => 34.0 / 32.0,
+            KvQuant::Q4_0 => 18.0 / 32.0,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KvQuant::F16 => "f16",
+            KvQuant::Q8_0 => "q8_0",
+            KvQuant::Q4_0 => "q4_0",
+        }
+    }
+
+    /// The canonical spellings, for the "try: …" half of a parse error.
+    pub fn hint() -> String {
+        hint_list(&KvQuant::ALL, KvQuant::label)
+    }
+
+    pub fn parse(s: &str) -> Option<KvQuant> {
+        let key: String = s
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        match key.as_str() {
+            "f16" | "fp16" | "float16" => Some(KvQuant::F16),
+            "q80" | "q8" | "int8" => Some(KvQuant::Q8_0),
+            "q40" | "q4" | "int4" => Some(KvQuant::Q4_0),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for KvQuant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
     }
@@ -283,15 +345,15 @@ impl Model {
         self.active_params() * 1e9 * quant.bits_per_weight() / 8.0 / BYTES_PER_GB
     }
 
-    /// KV cache size at `context` tokens, fp16.
-    pub fn kv_cache_gb(&self, context: u32) -> f64 {
-        match (self.layers, self.kv_heads, self.head_dim) {
+    /// KV cache size at `context` tokens, stored as `kv`.
+    pub fn kv_cache_gb_with(&self, context: u32, kv: KvQuant) -> f64 {
+        let fp16 = match (self.layers, self.kv_heads, self.head_dim) {
             (Some(layers), Some(kv_heads), Some(head_dim)) => {
                 2.0 * f64::from(layers)
                     * f64::from(kv_heads)
                     * f64::from(head_dim)
                     * f64::from(context)
-                    * KV_ELEMENT_BYTES
+                    * KvQuant::F16.bytes_per_element()
                     / BYTES_PER_GB
             }
             // The fallback scales with the *active* parameter count, not the
@@ -300,6 +362,26 @@ impl Model {
             // DeepSeek-V3 89 GB against a real 1.9 GB. For a dense model
             // `active_params` is `params_b`, so nothing changes there.
             _ => f64::from(context) * self.active_params() * KV_FALLBACK_GB_PER_TOKEN_PER_B,
+        };
+        fp16 * kv.bytes_per_element() / KvQuant::F16.bytes_per_element()
+    }
+
+    /// The longest context whose KV cache fits in `budget_gb`, capped at the
+    /// model's native window. Zero when the budget is gone before any context.
+    pub fn max_context_for(&self, budget_gb: f64, kv: KvQuant) -> u32 {
+        const PROBE: u32 = 4_096;
+        let per_token = self.kv_cache_gb_with(PROBE, kv) / f64::from(PROBE);
+        if budget_gb <= 0.0 {
+            return 0;
+        }
+        if per_token <= 0.0 {
+            return self.context_length;
+        }
+        let tokens = (budget_gb / per_token).floor();
+        if tokens >= f64::from(self.context_length) {
+            self.context_length
+        } else {
+            tokens as u32
         }
     }
 
@@ -312,17 +394,18 @@ impl Model {
         BASE_OVERHEAD_GB + resident_weights_gb * OVERHEAD_WEIGHT_FRACTION
     }
 
-    /// Total memory needed to run the whole model at `quant` with `context`.
-    pub fn total_memory_gb(&self, quant: Quant, context: u32) -> f64 {
+    /// Total memory needed to run the whole model at `quant` with `context`,
+    /// with the KV cache stored as `kv`.
+    pub fn total_memory_gb_with(&self, quant: Quant, context: u32, kv: KvQuant) -> f64 {
         let weights = self.weights_gb(quant);
-        weights + self.kv_cache_gb(context) + Model::overhead_gb(weights)
+        weights + self.kv_cache_gb_with(context, kv) + Model::overhead_gb(weights)
     }
 
     /// Memory that must be resident on the accelerator when experts are
     /// offloaded to system RAM. Dense models fall back to the full footprint.
-    pub fn moe_resident_gb(&self, quant: Quant, context: u32) -> f64 {
+    pub fn moe_resident_gb_with(&self, quant: Quant, context: u32, kv: KvQuant) -> f64 {
         let active = self.active_weights_gb(quant);
-        active + self.kv_cache_gb(context) + Model::overhead_gb(active)
+        active + self.kv_cache_gb_with(context, kv) + Model::overhead_gb(active)
     }
 
     /// Substring match over name, id, provider, use case and parameter size.
@@ -647,7 +730,7 @@ mod tests {
         let db = db();
         let m = db.find("meta-llama/Llama-3.1-8B-Instruct").unwrap();
         // 2 * 32 layers * 8 kv heads * 128 head dim * 8192 tokens * 2 bytes = 1 GiB
-        assert!((m.kv_cache_gb(8192) - 1.0).abs() < 0.01);
+        assert!((m.kv_cache_gb_with(8192, KvQuant::F16) - 1.0).abs() < 0.01);
     }
 
     #[test]
@@ -667,10 +750,10 @@ mod tests {
         );
 
         let dense_equivalent = f64::from(8192u32) * 37.0 * KV_FALLBACK_GB_PER_TOKEN_PER_B;
-        assert!((moe.kv_cache_gb(8192) - dense_equivalent).abs() < 1e-9);
+        assert!((moe.kv_cache_gb_with(8192, KvQuant::F16) - dense_equivalent).abs() < 1e-9);
         // Sanity: the total-parameter reading would be an order of magnitude worse.
         assert!(
-            moe.kv_cache_gb(8192)
+            moe.kv_cache_gb_with(8192, KvQuant::F16)
                 < f64::from(8192u32) * 671.0 * KV_FALLBACK_GB_PER_TOKEN_PER_B / 10.0
         );
     }
@@ -680,8 +763,8 @@ mod tests {
         let db = db();
         let m = db.find("mistralai/Mixtral-8x7B-Instruct-v0.1").unwrap();
         assert!(m.is_moe());
-        let full = m.total_memory_gb(Quant::Q4KM, 8192);
-        let resident = m.moe_resident_gb(Quant::Q4KM, 8192);
+        let full = m.total_memory_gb_with(Quant::Q4KM, 8192, KvQuant::F16);
+        let resident = m.moe_resident_gb_with(Quant::Q4KM, 8192, KvQuant::F16);
         assert!(
             resident < full / 2.0,
             "full {full:.1} vs resident {resident:.1}"
