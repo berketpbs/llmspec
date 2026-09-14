@@ -157,9 +157,11 @@ MODELS = [
       6.91, 32768, "reasoning", "mit", "2025-04", ["math"], 3, True, None),
 
     # -- Mistral AI ---------------------------------------------------------
+    # No Ollama tag: `ministral:8b` was withdrawn, and `ministral-3:8b` is the
+    # 2512 model rather than this 2410 one.
     m("mistralai/Ministral-8B-Instruct-2410", "Ministral 8B", "Mistral AI",
       8.02, 131072, "general", "mrl", "2024-10", ["tools"], 4, True,
-      "ministral:8b", layers=36, hidden_size=4096, kv_heads=8, head_dim=128),
+      None, layers=36, hidden_size=4096, kv_heads=8, head_dim=128),
     # `mistral-small:24b` is the 2501 build; the 3.2 refresh already in the
     # catalog keeps its own tag.
     m("mistralai/Mistral-Small-24B-Instruct-2501", "Mistral Small 3 24B",
