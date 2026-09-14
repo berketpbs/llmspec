@@ -295,7 +295,7 @@ impl App {
             sort: SortColumn::Score,
             status: String::new(),
             should_quit: false,
-            theme: Theme::from_index(Config::load().theme),
+            theme: Theme::from_ref(&Config::load().theme),
             simulation: simulation_form(&hw),
             speed_form: speed_form(&cfg),
             hw,
@@ -350,7 +350,7 @@ impl App {
         // also holds the cached memory-bandwidth measurement, which belongs to
         // the machine and must survive a theme change.
         let mut config = Config::load();
-        config.theme = self.theme.index();
+        config.theme = self.theme.to_ref();
         config.use_case = self.target;
         config.speed = PersistedSpeed::from(&self.cfg);
         if let Err(e) = config.save() {

@@ -48,11 +48,31 @@ pub fn config_dir() -> Option<PathBuf> {
 // Settings
 // ---------------------------------------------------------------------------
 
+/// How a theme preference is stored.
+///
+/// Themes were once written as a position in the TUI's theme list, which meant
+/// that list could never be reordered without silently moving everyone's
+/// theme. They are written by name now; the old form is still accepted so an
+/// existing config keeps working, and `serde(untagged)` picks between them on
+/// whether the JSON value is a string or a number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ThemeRef {
+    Name(String),
+    Index(usize),
+}
+
+impl Default for ThemeRef {
+    fn default() -> Self {
+        ThemeRef::Name("default".to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Index into the TUI theme list.
-    pub theme: usize,
+    /// Name of the TUI theme, or a bare index from an older config.
+    pub theme: ThemeRef,
     /// Use case the TUI and CLI rank for when none is given on the command line.
     pub use_case: UseCase,
     /// Persisted speed tunables from the TUI's advanced-config panel.
@@ -71,7 +91,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            theme: 0,
+            theme: ThemeRef::default(),
             use_case: UseCase::General,
             speed: PersistedSpeed::default(),
             ram_bandwidth_gb_s: None,
@@ -235,7 +255,7 @@ mod tests {
     fn defaults_round_trip_through_json() {
         let path = temp_path("config.json");
         let config = Config {
-            theme: 3,
+            theme: ThemeRef::Name("solarized".to_string()),
             use_case: UseCase::Coding,
             speed: PersistedSpeed {
                 efficiency: 0.7,
@@ -251,10 +271,34 @@ mod tests {
 
     #[test]
     fn partial_config_files_fill_in_defaults() {
-        let config: Config = serde_json::from_str(r#"{"theme": 7}"#).unwrap();
-        assert_eq!(config.theme, 7);
+        let config: Config = serde_json::from_str(r#"{"theme": "gruvbox"}"#).unwrap();
+        assert_eq!(config.theme, ThemeRef::Name("gruvbox".to_string()));
         assert_eq!(config.use_case, UseCase::General);
         assert_eq!(config.speed, PersistedSpeed::default());
+    }
+
+    #[test]
+    fn a_config_written_before_themes_had_names_still_parses() {
+        // Themes used to be stored as a position in the theme list. Those
+        // files are still out there, and dropping the number would reset the
+        // user to the default theme without saying so.
+        let config: Config = serde_json::from_str(r#"{"theme": 7}"#).unwrap();
+        assert_eq!(config.theme, ThemeRef::Index(7));
+    }
+
+    #[test]
+    fn themes_are_written_back_as_plain_names() {
+        // The file is meant to be hand-editable, so the value has to be the
+        // name and not a tagged enum.
+        let config = Config {
+            theme: ThemeRef::Name("kanagawa".to_string()),
+            ..Config::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(
+            json.contains(r#""theme":"kanagawa""#),
+            "unexpected encoding: {json}"
+        );
     }
 
     #[test]

@@ -149,7 +149,7 @@ sends the key it names — and the wheel moves between models. Capturing the
 mouse means the terminal's own selection needs `Shift` held while dragging.
 
 Downloads and runtime probes run in the background — the interface never
-blocks on the network. Ten themes are included; the choice is remembered.
+blocks on the network. Twenty-one themes are included; the choice is remembered.
 
 ---
 
@@ -313,11 +313,30 @@ rather than stopping llmspec from starting.
 
 ```json
 {
-  "theme": 3,
+  "theme": "dracula",
   "use_case": "coding",
   "speed": { "efficiency": 0.72, "gpu_factor": 1.0 }
 }
 ```
+
+`t` cycles through the themes in the TUI, but the name can also be set by
+hand. `default` follows the terminal's own palette; the rest are fixed RGB:
+
+| | |
+|---|---|
+| Editor palettes | `dracula` `nord` `solarized` `gruvbox` `monokai` `tokyo-night` `catppuccin-mocha` `rose-pine` `everforest` `kanagawa` `one-dark` |
+| llmspec's own | `ocean` `forest` `sunset` `slate` `aurora` `matrix` `sakura` |
+| Legibility first | `colourblind-safe` `high-contrast` |
+
+`colourblind-safe` is worth knowing about even if you never use it. Every
+other theme separates the fit verdicts along the red-to-green axis, which is
+the one axis a deuteranope cannot read; this one uses the Okabe-Ito palette
+and runs them from blue to orange instead. `high-contrast` keeps every colour
+above the WCAG AA contrast floor for projectors and glare.
+
+A name this build does not have — a theme from a newer version, or a typo —
+falls back to the default rather than refusing to start. Configs from before
+themes were named stored a number instead; those are still read.
 
 ---
 

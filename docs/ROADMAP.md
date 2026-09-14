@@ -36,7 +36,7 @@ only about scope.
 
 **Interfaces**
 
-- Interactive TUI with ten themes, comparison, planning and simulation
+- Interactive TUI with twenty-one themes, comparison, planning and simulation
 - Classic CLI for every command, with JSON everywhere
 - Read-only HTTP API
 - `doctor` diagnostics, exiting non-zero on warnings
