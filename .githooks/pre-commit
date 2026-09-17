@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Runs the same three checks as .github/workflows/ci.yml before a commit is
+# Runs the same four checks as .github/workflows/ci.yml before a commit is
 # created, so a red X on GitHub is caught here instead of arriving as mail
 # minutes later. This is the whole reason the hook exists: every failed CI run
 # in this repository's history was a commit that would not have passed
@@ -71,5 +71,23 @@ run "Format check" "cargo fmt" cargo fmt -- --check
 run "Clippy" "yukaridaki uyarilari duzelt" \
     cargo clippy --all-targets --all-features -- -D warnings
 run "Test" "cargo test --all-features" cargo test --all-features
+
+# data/models.json is generated from scripts/add_models.py. A hand edit to the
+# JSON is overwritten by the next run of the script, so it is stopped here.
+# `python3` on Windows can be the Store stub that exits with an error, so each
+# candidate is tried rather than just looked up.
+py=""
+for candidate in python3 python; do
+    if "$candidate" -c "" >/dev/null 2>&1; then
+        py=$candidate
+        break
+    fi
+done
+if [ -n "$py" ]; then
+    run "Catalog" "degisikligi scripts/add_models.py'ye tasi ve calistir" \
+        "$py" scripts/add_models.py --check
+else
+    echo "pre-commit: python bulunamadi, katalog kontrolu atlaniyor" >&2
+fi
 
 echo "pre-commit: hepsi gecti"
