@@ -596,7 +596,7 @@ the build instead of being lost on the script's next run.
 ## Development
 
 ```sh
-cargo test          # 286 tests
+cargo test          # 287 tests
 cargo clippy --all-targets
 cargo fmt
 ```

@@ -268,7 +268,7 @@ impl Session {
         let mut hw = build_hardware(cli)?;
         // Measured once per machine and cached. Every estimate for weights
         // that spill into RAM is only as good as this figure.
-        hw.ram_bandwidth_gb_s = Some(stored.ram_bandwidth());
+        hw.ram_bandwidth_gb_s = Some(stored.ram_bandwidth(hw.cpu_cores));
         // What `bench` measured here outranks any estimate — but only on the
         // machine it was measured on, never on a simulated one.
         if !hw.simulated {
