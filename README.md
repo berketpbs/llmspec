@@ -302,10 +302,19 @@ llmspec serve --host 127.0.0.1 --port 8228
 `min_fit`, `perfect`, `include_too_tight`, `max_context`, `min_tps`,
 `max_size_gb` and `min_context`.
 
+Numeric filters must be positive where applicable. Invalid, negative, zero,
+non-finite or malformed values return HTTP 400 with a JSON `error`. An
+ambiguous model name also returns HTTP 400 instead of silently selecting the
+first catalog entry; use the model id or a more specific query.
+
 ```sh
 curl "http://127.0.0.1:8228/models?use_case=coding&min_tps=20&limit=3"
 curl "http://127.0.0.1:8228/models/Qwen%2FQwen2.5-7B-Instruct"
 ```
+
+The CLI applies the same fail-closed rule to `--max-context` and the
+`OLLAMA_CONTEXT_LENGTH` environment variable: invalid values stop startup
+with an explanatory error instead of being silently ignored.
 
 Built on `std::net` — serving adds no dependency.
 

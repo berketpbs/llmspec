@@ -226,8 +226,13 @@ enum Command {
 
 fn main() {
     let cli = Cli::parse();
+    let json = cli.json;
     if let Err(err) = run(cli) {
-        eprintln!("{} {err}", "error:".red().bold());
+        if json {
+            println!("{}", display::to_json(&serde_json::json!({ "error": err })));
+        } else {
+            eprintln!("{} {err}", "error:".red().bold());
+        }
         std::process::exit(1);
     }
 }
@@ -288,7 +293,7 @@ impl Session {
             db: ModelDb::load(),
             target,
             cfg: SpeedConfig {
-                context_cap: resolve_context_cap(cli),
+                context_cap: resolve_context_cap(cli)?,
                 // A forced runtime shifts the throughput estimate: MLX and
                 // vLLM read the same weights faster than a GGUF loader does.
                 gpu_factor: stored.speed.gpu_factor
@@ -525,6 +530,12 @@ fn cmd_bench(
     tokens: Option<u32>,
     calibrate: bool,
 ) -> Result<(), String> {
+    if runs == 0 {
+        return Err("--runs must be at least 1".to_string());
+    }
+    if tokens == Some(0) {
+        return Err("--tokens must be at least 1".to_string());
+    }
     let mut registry = ProviderRegistry::new();
     let discovered = bench::select_runtime(&mut registry, session.runtime)?;
     let client = Runtime::with_url(discovered.kind, &discovered.base_url);
@@ -945,12 +956,33 @@ fn bench_targets(client: &Runtime, query: &str, all: bool) -> Result<Vec<BenchTa
 }
 
 /// `--max-context`, falling back to `OLLAMA_CONTEXT_LENGTH`.
-fn resolve_context_cap(cli: &Cli) -> Option<u32> {
-    cli.max_context.or_else(|| {
-        std::env::var("OLLAMA_CONTEXT_LENGTH")
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-    })
+fn resolve_context_cap(cli: &Cli) -> Result<Option<u32>, String> {
+    if let Some(value) = cli.max_context {
+        return if value == 0 {
+            Err("--max-context must be greater than 0".to_string())
+        } else {
+            Ok(Some(value))
+        };
+    }
+
+    match std::env::var("OLLAMA_CONTEXT_LENGTH") {
+        Ok(raw) => parse_context_cap(&raw, "OLLAMA_CONTEXT_LENGTH").map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("OLLAMA_CONTEXT_LENGTH is not valid UTF-8".to_string())
+        }
+    }
+}
+
+fn parse_context_cap(raw: &str, source: &str) -> Result<u32, String> {
+    let value = raw
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| format!("{source} '{raw}' is not a positive integer"))?;
+    if value == 0 {
+        return Err(format!("{source} must be greater than 0"));
+    }
+    Ok(value)
 }
 
 fn resolve_min_fit(
@@ -994,4 +1026,17 @@ fn report_json(session: &Session, results: &[FitResult]) -> String {
         count: results.len(),
         models: results,
     })
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::parse_context_cap;
+
+    #[test]
+    fn context_cap_requires_a_positive_integer() {
+        assert_eq!(parse_context_cap("32768", "test"), Ok(32768));
+        assert!(parse_context_cap("0", "test").is_err());
+        assert!(parse_context_cap("not-a-number", "test").is_err());
+        assert!(parse_context_cap("-1", "test").is_err());
+    }
 }

@@ -515,6 +515,7 @@ impl ModelDb {
     /// For callers that address a model by an identifier they already hold —
     /// an id from an earlier response, a catalog entry being re-read — where
     /// there is nothing for a person to disambiguate.
+    #[cfg(test)]
     pub fn find(&self, query: &str) -> Option<&Model> {
         match self.resolve(query) {
             Lookup::Found(model) => Some(model),
