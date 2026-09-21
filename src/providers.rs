@@ -760,6 +760,9 @@ fn parse_ollama_sample(text: &str) -> Result<Sample, String> {
 }
 
 fn parse_openai_sample(text: &str, elapsed: f64) -> Result<Sample, String> {
+    if !elapsed.is_finite() || elapsed <= 0.0 {
+        return Err("response elapsed time must be finite and positive".to_string());
+    }
     let parsed: ChatResponse =
         serde_json::from_str(text).map_err(|e| format!("parsing chat completion: {e}"))?;
     if let Some(err) = parsed.error {
@@ -1015,6 +1018,14 @@ mod tests {
     #[test]
     fn openai_sample_without_usage_is_an_error() {
         assert!(parse_openai_sample(r#"{"choices":[]}"#, 1.0).is_err());
+    }
+
+    #[test]
+    fn openai_samples_require_positive_elapsed_time() {
+        let json = r#"{"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+        assert!(parse_openai_sample(json, 0.0).is_err());
+        assert!(parse_openai_sample(json, -1.0).is_err());
+        assert!(parse_openai_sample(json, f64::NAN).is_err());
     }
 
     #[test]

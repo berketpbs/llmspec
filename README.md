@@ -59,15 +59,22 @@ there is nothing else to install and nothing to fetch at runtime.
 
 Pull requests run formatting, locked dependency tests, Clippy with warnings
 denied, and a generated-catalog consistency check.
+The Rust validation jobs use the repository’s declared Rust 1.85 toolchain and
+enable backtraces for actionable CI failures.
 
 The catalog check also validates the generator’s Python syntax and rejects
 records with empty ids, non-positive parameter counts, or invalid contexts.
+Small regression tests exercise those invariants directly, including rejection
+of non-finite parameter counts.
 
 CI cancels superseded runs for the same ref and applies explicit timeouts to
 each validation job, preventing stale or wedged checks from consuming runners.
+Checkout steps do not persist repository credentials into the runner workspace.
 
 Release builds and crates.io publishing also use the committed lockfile, so
 published artifacts are built from the reviewed dependency graph.
+Release jobs use the same Rust toolchain as CI and have explicit timeouts for
+cross-platform builds and publishing.
 
 ---
 
@@ -82,6 +89,8 @@ llmspec bench                # measure real tokens/sec
 
 Numeric hardware overrides are validated before probing the machine. Values
 such as `--cpu-cores 0` or `--gpu-count 0` fail with an explanatory error.
+Size overrides also reject non-finite values instead of allowing them into
+memory calculations.
 
 Four questions llmspec exists to answer:
 
@@ -332,7 +341,8 @@ The CLI applies the same fail-closed rule to `--max-context` and the
 with an explanatory error instead of being silently ignored.
 
 The HTTP server also bounds request parsing: it accepts at most 64 query
-parameters and rejects an individual query component larger than 4 KiB.
+parameters, rejects duplicate keys, and rejects an individual query component
+larger than 4 KiB.
 
 Built on `std::net` — serving adds no dependency.
 
@@ -380,6 +390,11 @@ Numeric MCP arguments must also be finite; string values such as `"NaN"` and
 
 Runtime-reported parameter sizes follow the same rule: malformed, negative,
 zero and non-finite sizes are ignored rather than used to select a model.
+Provider benchmark samples also require a finite, positive elapsed duration
+before throughput is calculated.
+Hand-edited persisted speed factors and cached bandwidth values are sanitized
+on load; invalid values fall back to safe defaults rather than influencing
+model ranking.
 
 ---
 
@@ -391,6 +406,8 @@ without touching the weights.
 
 Verification caps untrusted header and metadata lengths at 64 MiB and rejects
 claims that cannot fit in the remaining file before allocating or iterating.
+Duplicate GGUF metadata keys are treated as structural corruption rather than
+silently allowing the last value to win.
 
 ```sh
 llmspec verify ~/.ollama/models/blobs/sha256-2bada8a745...

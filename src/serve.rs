@@ -371,6 +371,7 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
     if consumed == 0 {
         return Err("empty request".to_string());
     }
+    ensure_request_line_complete(consumed, &line)?;
 
     let request = parse_request_line(&line)?;
 
@@ -390,6 +391,14 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
     }
 
     Ok(request)
+}
+
+fn ensure_request_line_complete(consumed: usize, line: &str) -> Result<(), String> {
+    if consumed == MAX_HEADER_BYTES && !line.ends_with('\n') {
+        Err("request headers exceed the 8 KiB limit".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_request_line(line: &str) -> Result<Request, String> {
@@ -434,7 +443,11 @@ fn parse_request_line(line: &str) -> Result<Request, String> {
                 Some((k, v)) => (k, v),
                 None => (pair, ""),
             };
-            query.insert(percent_decode(key), percent_decode(value));
+            let key = percent_decode(key);
+            let value = percent_decode(value);
+            if query.insert(key.clone(), value).is_some() {
+                return Err(format!("duplicate query parameter '{key}'"));
+            }
         }
     }
 
@@ -578,6 +591,18 @@ mod tests {
 
         let huge = "x".repeat(MAX_QUERY_COMPONENT_BYTES + 1);
         assert!(parse_request_line(&format!("GET /?q={huge} HTTP/1.1")).is_err());
+    }
+
+    #[test]
+    fn duplicate_query_parameters_are_rejected() {
+        assert!(parse_request_line("GET /models?limit=1&limit=2 HTTP/1.1").is_err());
+    }
+
+    #[test]
+    fn unterminated_header_at_the_limit_is_rejected() {
+        assert!(ensure_request_line_complete(MAX_HEADER_BYTES, "partial").is_err());
+        assert!(ensure_request_line_complete(MAX_HEADER_BYTES, "complete\n").is_ok());
+        assert!(ensure_request_line_complete(MAX_HEADER_BYTES - 1, "partial").is_ok());
     }
 
     #[test]

@@ -369,7 +369,9 @@ fn read_metadata(reader: &mut Cursor, count: u64) -> Result<BTreeMap<String, Str
         let key = reader.string()?;
         let kind = reader.u32()?;
         let value = read_value(reader, kind, 0)?;
-        map.insert(key, value);
+        if map.insert(key.clone(), value).is_some() {
+            return Err(format!("duplicate metadata key '{key}'"));
+        }
     }
     Ok(map)
 }
@@ -838,6 +840,29 @@ mod tests {
         assert_eq!(report.architecture.as_deref(), Some("llama"));
         assert_eq!(report.parameters, 1024);
         assert_eq!(report.tensor_types[0].name, "Q4_K");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn duplicate_metadata_keys_are_reported_as_corruption() {
+        let mut bytes = b"GGUF".to_vec();
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&2u64.to_le_bytes());
+        for value in ["one", "two"] {
+            bytes.extend(gguf_string("duplicate"));
+            bytes.extend_from_slice(&8u32.to_le_bytes());
+            bytes.extend(gguf_string(value));
+        }
+        let path = write("duplicate-metadata.gguf", &bytes);
+        let report = verify(&path).unwrap();
+        assert!(!report.is_intact());
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.message.contains("duplicate metadata key"))
+        );
         let _ = std::fs::remove_file(&path);
     }
 

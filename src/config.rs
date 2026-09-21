@@ -289,6 +289,35 @@ impl Config {
             self.ram_bandwidth_gb_s = None;
             self.ram_probe = RAM_PROBE_VERSION;
         }
+        let defaults = PersistedSpeed::default();
+        for (value, fallback) in [
+            (&mut self.speed.efficiency, defaults.efficiency),
+            (&mut self.speed.cpu_efficiency, defaults.cpu_efficiency),
+            (&mut self.speed.gpu_factor, defaults.gpu_factor),
+            (
+                &mut self.speed.cpu_offload_factor,
+                defaults.cpu_offload_factor,
+            ),
+            (
+                &mut self.speed.moe_offload_factor,
+                defaults.moe_offload_factor,
+            ),
+            (
+                &mut self.speed.tensor_parallel_factor,
+                defaults.tensor_parallel_factor,
+            ),
+            (&mut self.speed.cpu_only_factor, defaults.cpu_only_factor),
+        ] {
+            if !value.is_finite() || *value <= 0.0 {
+                *value = fallback;
+            }
+        }
+        if self
+            .ram_bandwidth_gb_s
+            .is_some_and(|value| !value.is_finite() || value <= 0.0)
+        {
+            self.ram_bandwidth_gb_s = None;
+        }
         self
     }
 
@@ -542,6 +571,25 @@ mod tests {
         let loaded = Config::load_from(&path).unwrap();
         let _ = fs::remove_file(&path);
         assert!((loaded.speed.efficiency - 0.66).abs() < 1e-9);
+    }
+
+    #[test]
+    fn invalid_persisted_factors_fall_back_to_safe_defaults() {
+        let config: Config = serde_json::from_str(
+            r#"{"speed_model":2,"ram_probe":2,"speed":{"efficiency":-1.0,"gpu_factor":0.0,"cpu_only_factor":2.0},"ram_bandwidth_gb_s":-4.0}"#,
+        )
+        .unwrap();
+        let loaded = config.migrated();
+        assert_eq!(
+            loaded.speed.efficiency,
+            PersistedSpeed::default().efficiency
+        );
+        assert_eq!(
+            loaded.speed.gpu_factor,
+            PersistedSpeed::default().gpu_factor
+        );
+        assert_eq!(loaded.speed.cpu_only_factor, 2.0);
+        assert_eq!(loaded.ram_bandwidth_gb_s, None);
     }
 
     #[test]

@@ -9,6 +9,7 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: write
     strategy:
@@ -33,9 +34,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85
         with:
           targets: ${{ matrix.target }}
 
@@ -76,13 +79,16 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85
 
       - name: Publish
         run: cargo publish --locked --token ${{ secrets.CARGO_TOKEN }}
