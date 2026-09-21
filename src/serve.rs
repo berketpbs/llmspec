@@ -18,6 +18,8 @@ use crate::providers::ProviderRegistry;
 
 /// Cap on the request line plus headers. Anything larger is a client bug.
 const MAX_HEADER_BYTES: usize = 8 * 1024;
+const MAX_QUERY_PARAMETERS: usize = 64;
+const MAX_QUERY_COMPONENT_BYTES: usize = 4 * 1024;
 
 /// A slow or wedged client must not hold the single-threaded loop.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -416,7 +418,18 @@ fn parse_request_line(line: &str) -> Result<Request, String> {
 
     let mut query = HashMap::new();
     if let Some(raw) = raw_query {
-        for pair in raw.split('&').filter(|p| !p.is_empty()) {
+        let pairs: Vec<_> = raw.split('&').filter(|p| !p.is_empty()).collect();
+        if pairs.len() > MAX_QUERY_PARAMETERS {
+            return Err(format!(
+                "too many query parameters (maximum {MAX_QUERY_PARAMETERS})"
+            ));
+        }
+        for pair in pairs {
+            if pair.len() > MAX_QUERY_COMPONENT_BYTES {
+                return Err(format!(
+                    "query parameter is too large (maximum {MAX_QUERY_COMPONENT_BYTES} bytes)"
+                ));
+            }
             let (key, value) = match pair.split_once('=') {
                 Some((k, v)) => (k, v),
                 None => (pair, ""),
@@ -553,6 +566,18 @@ mod tests {
     fn malformed_escapes_are_left_alone() {
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("%zz"), "%zz");
+    }
+
+    #[test]
+    fn query_limits_reject_broad_or_oversized_requests() {
+        let many = (0..=MAX_QUERY_PARAMETERS)
+            .map(|n| format!("k{n}=v"))
+            .collect::<Vec<_>>()
+            .join("&");
+        assert!(parse_request_line(&format!("GET /?{many} HTTP/1.1")).is_err());
+
+        let huge = "x".repeat(MAX_QUERY_COMPONENT_BYTES + 1);
+        assert!(parse_request_line(&format!("GET /?q={huge} HTTP/1.1")).is_err());
     }
 
     #[test]

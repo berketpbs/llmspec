@@ -839,6 +839,10 @@ fn parse_quant(raw: &str) -> Result<Quant, String> {
 }
 
 fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
+    validate_positive_count("--cpu-cores", cli.cpu_cores)?;
+    if cli.gpu.is_some() {
+        validate_positive_count("--gpu-count", Some(cli.gpu_count))?;
+    }
     let mut hw = Hardware::detect();
     // The named card first, so `--memory` can still resize it: a 3090 with
     // 20 GB is a question someone might reasonably ask of a used listing.
@@ -856,6 +860,14 @@ fn build_hardware(cli: &Cli) -> Result<Hardware, String> {
     let ram = cli.ram.as_deref().map(parse_size_gb).transpose()?;
     hw.apply_overrides(vram, ram, cli.cpu_cores);
     Ok(hw)
+}
+
+fn validate_positive_count(name: &str, value: Option<usize>) -> Result<(), String> {
+    if value == Some(0) {
+        Err(format!("{name} must be greater than 0"))
+    } else {
+        Ok(())
+    }
 }
 
 fn resolve_runtime(cli: &Cli) -> Result<Option<RuntimeKind>, String> {
@@ -1030,7 +1042,7 @@ fn report_json(session: &Session, results: &[FitResult]) -> String {
 
 #[cfg(test)]
 mod cli_tests {
-    use super::parse_context_cap;
+    use super::{parse_context_cap, validate_positive_count};
 
     #[test]
     fn context_cap_requires_a_positive_integer() {
@@ -1038,5 +1050,12 @@ mod cli_tests {
         assert!(parse_context_cap("0", "test").is_err());
         assert!(parse_context_cap("not-a-number", "test").is_err());
         assert!(parse_context_cap("-1", "test").is_err());
+    }
+
+    #[test]
+    fn hardware_counts_require_positive_values() {
+        assert!(validate_positive_count("test", None).is_ok());
+        assert!(validate_positive_count("test", Some(1)).is_ok());
+        assert!(validate_positive_count("test", Some(0)).is_err());
     }
 }

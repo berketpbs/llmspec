@@ -57,6 +57,18 @@ cargo build --release      # target/release/llmspec
 Needs Rust 1.85 or newer. The model catalog is compiled into the binary, so
 there is nothing else to install and nothing to fetch at runtime.
 
+Pull requests run formatting, locked dependency tests, Clippy with warnings
+denied, and a generated-catalog consistency check.
+
+The catalog check also validates the generator’s Python syntax and rejects
+records with empty ids, non-positive parameter counts, or invalid contexts.
+
+CI cancels superseded runs for the same ref and applies explicit timeouts to
+each validation job, preventing stale or wedged checks from consuming runners.
+
+Release builds and crates.io publishing also use the committed lockfile, so
+published artifacts are built from the reviewed dependency graph.
+
 ---
 
 ## Quick start
@@ -67,6 +79,9 @@ llmspec fit -n 10            # the ten best models for this machine
 llmspec doctor               # what was detected, and what was guessed
 llmspec bench                # measure real tokens/sec
 ```
+
+Numeric hardware overrides are validated before probing the machine. Values
+such as `--cpu-cores 0` or `--gpu-count 0` fail with an explanatory error.
 
 Four questions llmspec exists to answer:
 
@@ -316,6 +331,9 @@ The CLI applies the same fail-closed rule to `--max-context` and the
 `OLLAMA_CONTEXT_LENGTH` environment variable: invalid values stop startup
 with an explanatory error instead of being silently ignored.
 
+The HTTP server also bounds request parsing: it accepts at most 64 query
+parameters and rejects an individual query component larger than 4 KiB.
+
 Built on `std::net` — serving adds no dependency.
 
 ---
@@ -354,6 +372,15 @@ answers either, so it does not matter which one your client speaks.
 Because stdout carries the protocol, every diagnostic goes to stderr. Clients
 show that as the server's log.
 
+MCP messages are capped at 1 MiB. Oversized input receives a JSON-RPC invalid
+request response and is not passed to the JSON parser.
+
+Numeric MCP arguments must also be finite; string values such as `"NaN"` and
+`"inf"` are rejected as tool errors.
+
+Runtime-reported parameter sizes follow the same rule: malformed, negative,
+zero and non-finite sizes are ignored rather than used to select a model.
+
 ---
 
 ## Verifying a download
@@ -361,6 +388,9 @@ show that as the server's log.
 A 40 GB download that stopped at 38 GB looks fine until the runtime chokes on
 it. `llmspec verify` reads the header and says so in a fraction of a second,
 without touching the weights.
+
+Verification caps untrusted header and metadata lengths at 64 MiB and rejects
+claims that cannot fit in the remaining file before allocating or iterating.
 
 ```sh
 llmspec verify ~/.ollama/models/blobs/sha256-2bada8a745...

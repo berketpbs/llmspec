@@ -25,7 +25,7 @@ use serde::Serialize;
 /// The largest header string or JSON blob worth reading. Both formats cap out
 /// far below this in practice; the limit exists so a corrupt length field
 /// fails fast instead of reserving whatever it asked for.
-const MAX_HEADER_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_HEADER_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Smallest possible on-disk size of one tensor descriptor (an empty name,
 /// zero dimensions, type and offset). Used to reject an impossible tensor
@@ -775,6 +775,11 @@ pub fn human(bytes: u64) -> String {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn header_budget_is_bounded_for_untrusted_files() {
+        assert_eq!(MAX_HEADER_BYTES, 64 * 1024 * 1024);
+    }
 
     fn temp(name: &str) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();

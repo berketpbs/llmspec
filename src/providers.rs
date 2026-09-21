@@ -715,7 +715,8 @@ fn parse_parameter_size(raw: &str) -> Option<f64> {
         _ => (trimmed, 1.0),
     };
     let value: f64 = digits.trim().parse().ok()?;
-    (value > 0.0).then_some(value / divisor)
+    let value = value / divisor;
+    (value.is_finite() && value > 0.0).then_some(value)
 }
 
 fn parse_openai_models(text: &str, provider: &str) -> Result<Vec<InstalledModel>, String> {
@@ -1116,6 +1117,9 @@ mod tests {
         assert_eq!(parse_parameter_size(""), None);
         assert_eq!(parse_parameter_size("unknown"), None);
         assert_eq!(parse_parameter_size("0B"), None);
+        assert_eq!(parse_parameter_size("NaNB"), None);
+        assert_eq!(parse_parameter_size("infB"), None);
+        assert_eq!(parse_parameter_size("-1B"), None);
     }
 
     #[test]
